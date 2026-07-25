@@ -23,6 +23,9 @@ export const DataProvider = ({ children }) => {
   const [tuitions, setTuitions] = useState([]);
   const [expenses, setExpenses] = useState({ budgetLimit: 12000, accounts: [], transactions: [] });
   const [shortcuts, setShortcuts] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [medications, setMedications] = useState([]);
+  const [medicationSchedules, setMedicationSchedules] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [focusData, setFocusData] = useState({ totalMinutesThisWeek: 0, sessionsCompletedThisWeek: 0 });
   const [activeAlerts, setActiveAlerts] = useState([]);
@@ -37,6 +40,9 @@ export const DataProvider = ({ children }) => {
     setTuitions(tuitionService.getStudents());
     setExpenses(expenseService.getData());
     setShortcuts(shortcutService.getAll());
+    setNotes(storageService.get(storageService.KEYS.NOTES, []));
+    setMedications(storageService.get(storageService.KEYS.MEDICATIONS, []));
+    setMedicationSchedules(storageService.get(storageService.KEYS.MEDICATION_SCHEDULES, []));
     setTasks(storageService.get(storageService.KEYS.TASKS, []));
     setFocusData(focusService.getData());
     setActiveAlerts(alertService.getActiveAlerts());
@@ -187,6 +193,134 @@ export const DataProvider = ({ children }) => {
     showToast('Shortcut added!');
   };
 
+  // --- Notes Handlers ---
+  const addNote = (noteData) => {
+    const list = storageService.get(storageService.KEYS.NOTES, []);
+    const now = new Date().toISOString();
+    const newNote = {
+      id: `note-${Date.now()}`,
+      title: '',
+      content: '',
+      color: 'violet',
+      labels: [],
+      pinned: false,
+      archived: false,
+      checklistMode: false,
+      checklistItems: [],
+      ...noteData,
+      updatedAt: now,
+      createdAt: noteData.createdAt || now,
+    };
+    list.unshift(newNote);
+    storageService.set(storageService.KEYS.NOTES, list);
+    refreshData();
+    showToast('Note saved to dashboard!');
+  };
+
+  const updateNote = (id, updatedData) => {
+    const list = storageService.get(storageService.KEYS.NOTES, []);
+    const index = list.findIndex(note => note.id === id);
+    if (index !== -1) {
+      list[index] = { ...list[index], ...updatedData, updatedAt: new Date().toISOString() };
+      storageService.set(storageService.KEYS.NOTES, list);
+    }
+    refreshData();
+    showToast('Note updated.');
+  };
+
+  const togglePinNote = (id) => {
+    const list = storageService.get(storageService.KEYS.NOTES, []);
+    const index = list.findIndex(note => note.id === id);
+    if (index !== -1) {
+      list[index].pinned = !list[index].pinned;
+      list[index].updatedAt = new Date().toISOString();
+      storageService.set(storageService.KEYS.NOTES, list);
+    }
+    refreshData();
+  };
+
+  const archiveNote = (id) => {
+    updateNote(id, { archived: true });
+  };
+
+  const toggleChecklistItem = (noteId, itemId) => {
+    const list = storageService.get(storageService.KEYS.NOTES, []);
+    const index = list.findIndex(note => note.id === noteId);
+    if (index !== -1) {
+      list[index] = {
+        ...list[index],
+        checklistItems: (list[index].checklistItems || []).map(item => item.id === itemId ? { ...item, completed: !item.completed } : item),
+        updatedAt: new Date().toISOString(),
+      };
+      storageService.set(storageService.KEYS.NOTES, list);
+    }
+    refreshData();
+  };
+
+  // --- Medication Handlers ---
+  const addMedication = (medData) => {
+    const list = storageService.get(storageService.KEYS.MEDICATIONS, []);
+    const now = new Date().toISOString();
+    const newMedication = {
+      id: `med-${Date.now()}`,
+      name: '',
+      dosageText: '',
+      form: 'Tablet',
+      instructions: '',
+      description: '',
+      startDate: '',
+      endDate: '',
+      scheduleTimes: [],
+      selectedDays: [],
+      status: 'Active',
+      color: 'blue',
+      ...medData,
+      updatedAt: now,
+      createdAt: medData.createdAt || now,
+    };
+    list.unshift(newMedication);
+    storageService.set(storageService.KEYS.MEDICATIONS, list);
+    refreshData();
+    showToast('Medication plan added!');
+  };
+
+  const updateMedication = (id, updatedData) => {
+    const list = storageService.get(storageService.KEYS.MEDICATIONS, []);
+    const index = list.findIndex(medication => medication.id === id);
+    if (index !== -1) {
+      list[index] = { ...list[index], ...updatedData, updatedAt: new Date().toISOString() };
+      storageService.set(storageService.KEYS.MEDICATIONS, list);
+    }
+    refreshData();
+    showToast('Medication plan updated.');
+  };
+
+  const toggleMedicationStatus = (id) => {
+    const list = storageService.get(storageService.KEYS.MEDICATIONS, []);
+    const index = list.findIndex(medication => medication.id === id);
+    if (index !== -1) {
+      list[index].status = list[index].status === 'Active' ? 'Paused' : 'Active';
+      list[index].updatedAt = new Date().toISOString();
+      storageService.set(storageService.KEYS.MEDICATIONS, list);
+    }
+    refreshData();
+  };
+
+  const logMedicationDose = (medicationId, schedule = {}) => {
+    const list = storageService.get(storageService.KEYS.MEDICATION_SCHEDULES, []);
+    list.unshift({
+      id: `medlog-${Date.now()}`,
+      medicationId,
+      status: schedule.status || 'taken',
+      takenAt: new Date().toISOString(),
+      scheduledFor: schedule.scheduledFor || null,
+      note: schedule.note || '',
+    });
+    storageService.set(storageService.KEYS.MEDICATION_SCHEDULES, list);
+    refreshData();
+    showToast('Dose logged.');
+  };
+
   const togglePinShortcut = (id) => {
     shortcutService.togglePin(id);
     refreshData();
@@ -245,6 +379,9 @@ export const DataProvider = ({ children }) => {
       tuitions,
       expenses,
       shortcuts,
+      notes,
+      medications,
+      medicationSchedules,
       tasks,
       focusData,
       activeAlerts,
@@ -277,6 +414,17 @@ export const DataProvider = ({ children }) => {
       addShortcut,
       togglePinShortcut,
       deleteShortcut,
+      // Notes actions
+      addNote,
+      updateNote,
+      togglePinNote,
+      archiveNote,
+      toggleChecklistItem,
+      // Medication actions
+      addMedication,
+      updateMedication,
+      toggleMedicationStatus,
+      logMedicationDose,
       // Alert & Task actions
       dismissAlert,
       restoreAlerts,

@@ -1,9 +1,13 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faDiscord, faGithub, faGoogleDrive, faLinkedin, faStackOverflow, faXTwitter } from '@fortawesome/free-brands-svg-icons';
 import {
   Sparkles,
   Calendar,
   CheckSquare,
+  FileText,
+  Pill,
   FileCheck2,
   GraduationCap,
   Banknote,
@@ -42,6 +46,17 @@ export const DashboardPage = () => {
     addShortcut,
     togglePinShortcut,
     deleteShortcut,
+    notes,
+    addNote,
+    updateNote,
+    togglePinNote,
+    archiveNote,
+    toggleChecklistItem,
+    medications,
+    addMedication,
+    updateMedication,
+    toggleMedicationStatus,
+    logMedicationDose,
     tasks,
     toggleTask,
     addTask,
@@ -60,6 +75,33 @@ export const DashboardPage = () => {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [isAddShortcutOpen, setIsAddShortcutOpen] = useState(false);
   const [newShortcut, setNewShortcut] = useState({ name: '', url: '', category: 'AI Tools' });
+
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [noteForm, setNoteForm] = useState({
+    title: '',
+    content: '',
+    color: 'amber',
+    labelsText: '',
+    checklistMode: false,
+    checklistText: '',
+  });
+  const [editingNoteId, setEditingNoteId] = useState(null);
+
+  const [isMedicationModalOpen, setIsMedicationModalOpen] = useState(false);
+  const [medicationForm, setMedicationForm] = useState({
+    name: '',
+    dosageText: '',
+    form: 'Tablet',
+    instructions: '',
+    description: '',
+    startDate: new Date().toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0],
+    scheduleTimesText: '08:00',
+    selectedDaysText: 'Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday',
+    color: 'blue',
+    status: 'Active',
+  });
+  const [editingMedicationId, setEditingMedicationId] = useState(null);
 
   // Task State
   const [newTaskTitle, setNewTaskTitle] = useState('');
@@ -86,6 +128,82 @@ export const DashboardPage = () => {
     return matchesSearch && matchesCategory;
   });
 
+  const visibleNotes = [...notes]
+    .filter((note) => !note.archived)
+    .sort((left, right) => Number(right.pinned) - Number(left.pinned) || new Date(right.updatedAt || right.createdAt || 0) - new Date(left.updatedAt || left.createdAt || 0));
+
+  const activeMedications = [...medications]
+    .filter((medication) => medication.status !== 'Archived')
+    .sort((left, right) => Number(right.status === 'Active') - Number(left.status === 'Active') || new Date(left.startDate || 0) - new Date(right.startDate || 0));
+
+  const noteColors = {
+    amber: 'bg-amber-500/10 border-amber-500/25 text-amber-800 dark:text-amber-100',
+    sky: 'bg-sky-500/10 border-sky-500/25 text-sky-800 dark:text-sky-100',
+    violet: 'bg-violet-500/10 border-violet-500/25 text-violet-800 dark:text-violet-100',
+    emerald: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-800 dark:text-emerald-100',
+    rose: 'bg-rose-500/10 border-rose-500/25 text-rose-800 dark:text-rose-100',
+  };
+
+  const medicationColors = {
+    blue: 'bg-blue-500/10 border-blue-500/25 text-blue-800 dark:text-blue-100',
+    emerald: 'bg-emerald-500/10 border-emerald-500/25 text-emerald-800 dark:text-emerald-100',
+    amber: 'bg-amber-500/10 border-amber-500/25 text-amber-800 dark:text-amber-100',
+    rose: 'bg-rose-500/10 border-rose-500/25 text-rose-800 dark:text-rose-100',
+    violet: 'bg-violet-500/10 border-violet-500/25 text-violet-800 dark:text-violet-100',
+  };
+
+  const shortcutBrandIcons = {
+    github: faGithub,
+    'google-drive': faGoogleDrive,
+    linkedin: faLinkedin,
+    discord: faDiscord,
+    'x-twitter': faXTwitter,
+    'stack-overflow': faStackOverflow,
+  };
+
+  const renderShortcutIcon = (shortcut) => {
+    if (shortcut?.icon?.type === 'brand') {
+      const brandIcon = shortcutBrandIcons[shortcut.icon.name];
+      if (brandIcon) {
+        return <FontAwesomeIcon icon={brandIcon} className="w-4 h-4 text-white" />;
+      }
+    }
+
+    const label = shortcut?.displayName || shortcut?.name || 'SC';
+    return <span className="text-[11px] font-extrabold text-white">{label.slice(0, 2).toUpperCase()}</span>;
+  };
+
+  const openNoteComposer = (note = null) => {
+    setEditingNoteId(note?.id || null);
+    setNoteForm({
+      title: note?.title || '',
+      content: note?.content || '',
+      color: note?.color || 'amber',
+      labelsText: (note?.labels || []).join(', '),
+      checklistMode: Boolean(note?.checklistMode),
+      checklistText: (note?.checklistItems || []).map((item) => item.text).join('\n'),
+    });
+    setIsNoteModalOpen(true);
+  };
+
+  const openMedicationComposer = (medication = null) => {
+    setEditingMedicationId(medication?.id || null);
+    setMedicationForm({
+      name: medication?.name || '',
+      dosageText: medication?.dosageText || '',
+      form: medication?.form || 'Tablet',
+      instructions: medication?.instructions || '',
+      description: medication?.description || '',
+      startDate: medication?.startDate || new Date().toISOString().split('T')[0],
+      endDate: medication?.endDate || new Date().toISOString().split('T')[0],
+      scheduleTimesText: (medication?.scheduleTimes || ['08:00']).join(', '),
+      selectedDaysText: (medication?.selectedDays || ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']).join(', '),
+      color: medication?.color || 'blue',
+      status: medication?.status || 'Active',
+    });
+    setIsMedicationModalOpen(true);
+  };
+
   const handleAddShortcutSubmit = (e) => {
     e.preventDefault();
     if (!newShortcut.name || !newShortcut.url) return;
@@ -100,6 +218,66 @@ export const DashboardPage = () => {
     if (!newTaskTitle.trim()) return;
     addTask({ title: newTaskTitle, dueDate: new Date().toISOString().split('T')[0], priority: 'medium', category: 'academic' });
     setNewTaskTitle('');
+  };
+
+  const handleNoteSubmit = (e) => {
+    e.preventDefault();
+    if (!noteForm.title.trim() && !noteForm.content.trim()) return;
+
+    const checklistItems = noteForm.checklistMode
+      ? noteForm.checklistText
+          .split('\n')
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map((text, index) => ({ id: `note-item-${Date.now()}-${index}`, text, completed: false }))
+      : [];
+
+    const payload = {
+      title: noteForm.title.trim(),
+      content: noteForm.content.trim(),
+      color: noteForm.color,
+      labels: noteForm.labelsText.split(',').map((label) => label.trim()).filter(Boolean),
+      checklistMode: noteForm.checklistMode,
+      checklistItems,
+      archived: false,
+    };
+
+    if (editingNoteId) {
+      updateNote(editingNoteId, payload);
+    } else {
+      addNote(payload);
+    }
+
+    setIsNoteModalOpen(false);
+    setEditingNoteId(null);
+  };
+
+  const handleMedicationSubmit = (e) => {
+    e.preventDefault();
+    if (!medicationForm.name.trim()) return;
+
+    const payload = {
+      name: medicationForm.name.trim(),
+      dosageText: medicationForm.dosageText.trim(),
+      form: medicationForm.form,
+      instructions: medicationForm.instructions.trim(),
+      description: medicationForm.description.trim(),
+      startDate: medicationForm.startDate,
+      endDate: medicationForm.endDate,
+      scheduleTimes: medicationForm.scheduleTimesText.split(',').map((item) => item.trim()).filter(Boolean),
+      selectedDays: medicationForm.selectedDaysText.split(',').map((item) => item.trim()).filter(Boolean),
+      color: medicationForm.color,
+      status: medicationForm.status,
+    };
+
+    if (editingMedicationId) {
+      updateMedication(editingMedicationId, payload);
+    } else {
+      addMedication(payload);
+    }
+
+    setIsMedicationModalOpen(false);
+    setEditingMedicationId(null);
   };
 
   return (
@@ -162,24 +340,97 @@ export const DashboardPage = () => {
           actionLabel="Check Attendance"
           onClick={() => window.location.hash = '/attendance'}
         />
-        <StatCard
-          title="Current CGPA"
-          value={`${cgpa.toFixed(2)} / 4.00`}
-          subtext="Calculated across all completed semesters"
-          icon={GraduationCap}
-          color="cyan"
-          actionLabel="Predict Target"
-          onClick={() => window.location.hash = '/cgpa'}
-        />
-        <StatCard
-          title="Tuition Earned"
-          value={`৳ ${tuitionAnalytics.totalReceivedIncome}`}
-          subtext={`Pending: ৳${tuitionAnalytics.totalOutstandingIncome}`}
-          icon={Banknote}
-          color="emerald"
-          actionLabel="Manage Tuition"
-          onClick={() => window.location.hash = '/tuition'}
-        />
+        <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Notes</p>
+              <h3 className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white">{visibleNotes.length} active notes</h3>
+            </div>
+            <div className="w-11 h-11 rounded-2xl bg-amber-500/15 text-amber-600 dark:text-amber-300 flex items-center justify-center">
+              <FileText className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="space-y-3 flex-1">
+            {visibleNotes.slice(0, 2).map((note) => (
+              <button
+                key={note.id}
+                type="button"
+                onClick={() => openNoteComposer(note)}
+                className={`w-full text-left rounded-2xl border px-3 py-3 transition-all hover:-translate-y-0.5 ${noteColors[note.color] || noteColors.violet}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold truncate">{note.title}</p>
+                    <p className="mt-1 text-xs leading-5 opacity-90 line-clamp-2">{note.content}</p>
+                  </div>
+                  {note.pinned && <Pin className="w-4 h-4 shrink-0" />}
+                </div>
+              </button>
+            ))}
+            {visibleNotes.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 px-3 py-4 text-xs text-slate-500 dark:text-slate-400">
+                No notes yet. Capture a revision, a reminder, or a checklist.
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => openNoteComposer()}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 px-4 py-2.5 text-xs font-bold text-white transition-colors"
+          >
+            <Edit2 className="w-4 h-4" />
+            <span>New Note</span>
+          </button>
+        </div>
+
+        <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-4">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Medication</p>
+              <h3 className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white">{activeMedications.filter((medication) => medication.status === 'Active').length} active plans</h3>
+            </div>
+            <div className="w-11 h-11 rounded-2xl bg-cyan-500/15 text-cyan-600 dark:text-cyan-300 flex items-center justify-center">
+              <Pill className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="space-y-3 flex-1">
+            {activeMedications.slice(0, 2).map((medication) => (
+              <button
+                key={medication.id}
+                type="button"
+                onClick={() => openMedicationComposer(medication)}
+                className={`w-full text-left rounded-2xl border px-3 py-3 transition-all hover:-translate-y-0.5 ${medicationColors[medication.color] || medicationColors.blue}`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold truncate">{medication.name}</p>
+                    <p className="mt-1 text-xs leading-5 opacity-90 truncate">{medication.dosageText || medication.instructions}</p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-white/70 dark:bg-slate-950/60 px-2 py-1 text-[10px] font-bold uppercase tracking-wide">
+                    {medication.status}
+                  </span>
+                </div>
+              </button>
+            ))}
+            {activeMedications.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-slate-200 dark:border-slate-700 px-3 py-4 text-xs text-slate-500 dark:text-slate-400">
+                No medication plans saved yet.
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => openMedicationComposer()}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 px-4 py-2.5 text-xs font-bold text-white transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Add Medication</span>
+          </button>
+        </div>
       </div>
 
       {/* ALERT WIDGETS SECTION */}
@@ -318,13 +569,13 @@ export const DashboardPage = () => {
                   className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold mb-2 shadow-md"
                   style={{ backgroundColor: sc.color || '#4F46E5' }}
                 >
-                  {sc.name.slice(0, 2).toUpperCase()}
+                  {renderShortcutIcon(sc)}
                 </div>
                 <span className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-full">
                   {sc.name}
                 </span>
                 <span className="text-[10px] text-slate-400 truncate max-w-full mt-0.5">
-                  {sc.category}
+                  {sc.category || shortcutService.getShortcutLabel(sc)}
                 </span>
               </a>
 
@@ -481,6 +732,227 @@ export const DashboardPage = () => {
               className="px-5 py-2 text-xs font-bold bg-brand-600 text-white rounded-xl shadow-md"
             >
               Add Shortcut
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isNoteModalOpen} onClose={() => setIsNoteModalOpen(false)} title={editingNoteId ? 'Edit Note' : 'New Note'} maxWidth="max-w-2xl">
+        <form onSubmit={handleNoteSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Title</label>
+              <input
+                type="text"
+                value={noteForm.title}
+                onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
+                placeholder="Revision note, reminder, checklist..."
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Accent Color</label>
+              <select
+                value={noteForm.color}
+                onChange={(e) => setNoteForm({ ...noteForm, color: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+              >
+                <option value="amber">Amber</option>
+                <option value="sky">Sky</option>
+                <option value="violet">Violet</option>
+                <option value="emerald">Emerald</option>
+                <option value="rose">Rose</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Content</label>
+            <textarea
+              rows="5"
+              value={noteForm.content}
+              onChange={(e) => setNoteForm({ ...noteForm, content: e.target.value })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none resize-none"
+              placeholder="Write the note here..."
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Labels</label>
+            <input
+              type="text"
+              value={noteForm.labelsText}
+              onChange={(e) => setNoteForm({ ...noteForm, labelsText: e.target.value })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
+              placeholder="academic, revision, urgent"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700">
+            <div>
+              <p className="text-xs font-bold text-slate-700 dark:text-slate-200">Checklist mode</p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">Enter one item per line to create a checklist note.</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNoteForm({ ...noteForm, checklistMode: !noteForm.checklistMode })}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-colors ${noteForm.checklistMode ? 'bg-brand-600 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'}`}
+            >
+              {noteForm.checklistMode ? 'Enabled' : 'Disabled'}
+            </button>
+          </div>
+          {noteForm.checklistMode && (
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Checklist items</label>
+              <textarea
+                rows="4"
+                value={noteForm.checklistText}
+                onChange={(e) => setNoteForm({ ...noteForm, checklistText: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none resize-none"
+                placeholder="Item 1\nItem 2\nItem 3"
+              />
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setIsNoteModalOpen(false)} className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">
+              Cancel
+            </button>
+            <button type="submit" className="px-5 py-2 text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white rounded-xl shadow-md">
+              {editingNoteId ? 'Update Note' : 'Save Note'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isMedicationModalOpen} onClose={() => setIsMedicationModalOpen(false)} title={editingMedicationId ? 'Edit Medication' : 'Add Medication'} maxWidth="max-w-2xl">
+        <form onSubmit={handleMedicationSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Name</label>
+              <input
+                type="text"
+                value={medicationForm.name}
+                onChange={(e) => setMedicationForm({ ...medicationForm, name: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
+                placeholder="Medication name"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Form</label>
+              <select
+                value={medicationForm.form}
+                onChange={(e) => setMedicationForm({ ...medicationForm, form: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+              >
+                <option value="Tablet">Tablet</option>
+                <option value="Capsule">Capsule</option>
+                <option value="Drops">Drops</option>
+                <option value="Syrup">Syrup</option>
+                <option value="Inhaler">Inhaler</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Dosage</label>
+            <input
+              type="text"
+              value={medicationForm.dosageText}
+              onChange={(e) => setMedicationForm({ ...medicationForm, dosageText: e.target.value })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
+              placeholder="1 tablet after dinner"
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Start Date</label>
+              <input
+                type="date"
+                value={medicationForm.startDate}
+                onChange={(e) => setMedicationForm({ ...medicationForm, startDate: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">End Date</label>
+              <input
+                type="date"
+                value={medicationForm.endDate}
+                onChange={(e) => setMedicationForm({ ...medicationForm, endDate: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Schedule times</label>
+            <input
+              type="text"
+              value={medicationForm.scheduleTimesText}
+              onChange={(e) => setMedicationForm({ ...medicationForm, scheduleTimesText: e.target.value })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
+              placeholder="08:00, 20:30"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Days</label>
+            <input
+              type="text"
+              value={medicationForm.selectedDaysText}
+              onChange={(e) => setMedicationForm({ ...medicationForm, selectedDaysText: e.target.value })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
+              placeholder="Sunday, Monday, Tuesday"
+            />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Accent Color</label>
+              <select
+                value={medicationForm.color}
+                onChange={(e) => setMedicationForm({ ...medicationForm, color: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+              >
+                <option value="blue">Blue</option>
+                <option value="emerald">Emerald</option>
+                <option value="amber">Amber</option>
+                <option value="rose">Rose</option>
+                <option value="violet">Violet</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Status</label>
+              <select
+                value={medicationForm.status}
+                onChange={(e) => setMedicationForm({ ...medicationForm, status: e.target.value })}
+                className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+              >
+                <option value="Active">Active</option>
+                <option value="Paused">Paused</option>
+                <option value="Archived">Archived</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Instructions</label>
+            <textarea
+              rows="4"
+              value={medicationForm.instructions}
+              onChange={(e) => setMedicationForm({ ...medicationForm, instructions: e.target.value })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none resize-none"
+              placeholder="Take after breakfast with water..."
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Description</label>
+            <textarea
+              rows="3"
+              value={medicationForm.description}
+              onChange={(e) => setMedicationForm({ ...medicationForm, description: e.target.value })}
+              className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none resize-none"
+              placeholder="Optional short reminder text..."
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={() => setIsMedicationModalOpen(false)} className="px-4 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">
+              Cancel
+            </button>
+            <button type="submit" className="px-5 py-2 text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white rounded-xl shadow-md">
+              {editingMedicationId ? 'Update Medication' : 'Save Medication'}
             </button>
           </div>
         </form>

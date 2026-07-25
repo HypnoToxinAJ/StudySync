@@ -7,6 +7,8 @@ import {
   initialTuitionStudents,
   initialExpenses,
   initialShortcuts,
+  initialNotes,
+  initialMedications,
   initialTasks,
   initialFocusData
 } from '../data/mockData';
@@ -20,6 +22,9 @@ const KEYS = {
   TUITIONS: 'studysync_tuitions',
   EXPENSES: 'studysync_expenses',
   SHORTCUTS: 'studysync_shortcuts',
+  NOTES: 'studysync_notes',
+  MEDICATIONS: 'studysync_medications',
+  MEDICATION_SCHEDULES: 'studysync_medication_schedules',
   TASKS: 'studysync_tasks',
   FOCUS: 'studysync_focus',
   DISMISSED_ALERTS: 'studysync_dismissed_alerts',
@@ -57,6 +62,9 @@ export const storageService = {
     if (!localStorage.getItem(KEYS.TUITIONS)) storageService.set(KEYS.TUITIONS, initialTuitionStudents);
     if (!localStorage.getItem(KEYS.EXPENSES)) storageService.set(KEYS.EXPENSES, initialExpenses);
     if (!localStorage.getItem(KEYS.SHORTCUTS)) storageService.set(KEYS.SHORTCUTS, initialShortcuts);
+    if (!localStorage.getItem(KEYS.NOTES)) storageService.set(KEYS.NOTES, initialNotes);
+    if (!localStorage.getItem(KEYS.MEDICATIONS)) storageService.set(KEYS.MEDICATIONS, initialMedications);
+    if (!localStorage.getItem(KEYS.MEDICATION_SCHEDULES)) storageService.set(KEYS.MEDICATION_SCHEDULES, []);
     if (!localStorage.getItem(KEYS.TASKS)) storageService.set(KEYS.TASKS, initialTasks);
     if (!localStorage.getItem(KEYS.FOCUS)) storageService.set(KEYS.FOCUS, initialFocusData);
     if (!localStorage.getItem(KEYS.DISMISSED_ALERTS)) storageService.set(KEYS.DISMISSED_ALERTS, []);
