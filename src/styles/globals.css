@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: 79 70 229;
+    --color-cyan: 6 182 212;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+/* FullCalendar styling tweaks */
+.fc {
+  font-family: inherit !important;
+}
+
+.fc .fc-toolbar-title {
+  font-size: 1.125rem !important;
+  font-weight: 700 !important;
+}
+
+.fc-theme-standard td, .fc-theme-standard th {
+  border-color: rgba(226, 232, 240, 0.6) !important;
+}
+
+.dark .fc-theme-standard td, .dark .fc-theme-standard th {
+  border-color: rgba(51, 65, 85, 0.6) !important;
+}
+
+.dark .fc .fc-button-primary {
+  background-color: #334155 !important;
+  border-color: #475569 !important;
+  color: #F8FAFC !important;
+}
+
+.dark .fc .fc-button-primary:hover {
+  background-color: #475569 !important;
+}
+
+.dark .fc .fc-button-active {
+  background-color: #4F46E5 !important;
+  border-color: #6366F1 !important;
+}
+
+.dark .fc-daygrid-day-number, .dark .fc-col-header-cell-cushion {
+  color: #CBD5E1 !important;
+}
+
+.fc .fc-day-today {
+  background-color: rgba(79, 70, 229, 0.08) !important;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.dark .glass-panel {
+  background: rgba(30, 41, 59, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
