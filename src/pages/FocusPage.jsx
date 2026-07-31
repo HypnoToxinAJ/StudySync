@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { Badge } from '../components/common/Badge';
+import { YouTubeFocusCard } from '../components/focus/YouTubeFocusCard';
 
 export const FocusPage = () => {
   const { focusData, logFocusSession, tasks } = useData();
@@ -79,7 +80,7 @@ export const FocusPage = () => {
           Distraction-Free Learning Station
         </h2>
         <p className="text-xs text-slate-500 dark:text-slate-400">
-          Pomodoro intervals, ambient white noise, and focused study minutes tracking
+          Pomodoro intervals, distraction-free YouTube, and focused study minutes tracking
         </p>
       </div>
 
@@ -183,6 +184,8 @@ export const FocusPage = () => {
           </div>
         </div>
       </div>
+
+      <YouTubeFocusCard />
     </div>
   );
 };
