@@ -110,6 +110,9 @@ export const DashboardPage = () => {
   // Task State
   const [newTaskTitle, setNewTaskTitle] = useState('');
 
+  // Confirm dismiss-all alert state
+  const [isConfirmDismissAllOpen, setIsConfirmDismissAllOpen] = useState(false);
+
   // Greeting calculation
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good Morning' : hour < 18 ? 'Good Afternoon' : 'Good Evening';
