@@ -21,6 +21,8 @@ import { useData } from '../../context/DataContext';
 import { UserAvatar } from '../common/UserAvatar';
 import { ConfirmDialog } from '../common/ConfirmDialog';
 
+import { DictionarySearch } from '../dictionary/DictionarySearch';
+
 export const TopNavbar = ({ onOpenMobileNav, onOpenQuickAdd }) => {
   const navigate = useNavigate();
   const { user, logout } = useAuth();
@@ -68,8 +70,11 @@ export const TopNavbar = ({ onOpenMobileNav, onOpenQuickAdd }) => {
         </div>
       </div>
 
-      {/* Right: Date, Quick Add, Notifications, Theme Toggle, Profile */}
-      <div className="flex items-center space-x-2 sm:space-x-4">
+      {/* Right: Dictionary Search, Date, Quick Add, Notifications, Theme Toggle, Profile */}
+      <div className="flex items-center space-x-2 sm:space-x-3">
+        {/* Dictionary Search */}
+        <DictionarySearch />
+
         {/* Date Display */}
         <div className="hidden xl:block text-right">
           <p className="text-xs font-bold text-slate-900 dark:text-white">
