@@ -75,17 +75,39 @@ export const DataProvider = ({ children }) => {
     showToast('Routine entry removed.');
   };
 
-  // --- Attendance Handlers ---
-  const recordAttendance = (courseId, status) => {
-    attendanceService.recordAttendance(courseId, status);
+  // --- Attendance & Missed-Class Handlers ---
+  const recordMissedClass = (courseId, date, reason) => {
+    attendanceService.recordMissedClass(courseId, date, reason);
     refreshData();
-    showToast(status === 'attended' ? 'Marked as Attended!' : 'Marked as Missed!', status === 'attended' ? 'success' : 'warning');
+    showToast('Marked as Missed Class!', 'warning');
+  };
+
+  const recordAttendance = (courseId, status, date, reason) => {
+    attendanceService.recordAttendance(courseId, status, date, reason);
+    refreshData();
+    showToast(status === 'missed' ? 'Marked as Missed Class!' : 'Attendance updated.', status === 'missed' ? 'warning' : 'info');
+  };
+
+  const undoLastMissed = (courseId) => {
+    attendanceService.undoLastMissed(courseId);
+    refreshData();
+    showToast('Latest missed class record undone.');
   };
 
   const undoAttendance = (courseId) => {
-    attendanceService.undoLastAttendance(courseId);
+    undoLastMissed(courseId);
+  };
+
+  const updateMissedRecord = (courseId, recordId, data) => {
+    attendanceService.updateMissedRecord(courseId, recordId, data);
     refreshData();
-    showToast('Attendance record undone.');
+    showToast('Missed class record updated.');
+  };
+
+  const deleteMissedRecord = (courseId, recordId) => {
+    attendanceService.deleteMissedRecord(courseId, recordId);
+    refreshData();
+    showToast('Missed class record deleted.');
   };
 
   const addCourse = (data) => {
@@ -104,6 +126,31 @@ export const DataProvider = ({ children }) => {
     attendanceService.deleteCourse(id);
     refreshData();
     showToast('Course deleted.');
+  };
+
+  // --- Course Inline Assessment Handlers ---
+  const addAssessmentToCourse = (courseId, assessmentData) => {
+    marksService.addAssessmentToCourse(courseId, assessmentData);
+    refreshData();
+    showToast('Assessment added to course!');
+  };
+
+  const updateAssessmentInCourse = (courseId, assessmentId, updatedData) => {
+    marksService.updateAssessmentInCourse(courseId, assessmentId, updatedData);
+    refreshData();
+    showToast('Assessment marks updated!');
+  };
+
+  const deleteAssessmentFromCourse = (courseId, assessmentId) => {
+    marksService.deleteAssessmentFromCourse(courseId, assessmentId);
+    refreshData();
+    showToast('Assessment removed from course.');
+  };
+
+  const toggleAssessmentMissed = (courseId, assessmentId) => {
+    marksService.toggleAssessmentMissed(courseId, assessmentId);
+    refreshData();
+    showToast('Assessment status toggled.');
   };
 
   // --- Assessment / Test & Assignment Handlers ---
@@ -409,10 +456,19 @@ export const DataProvider = ({ children }) => {
       deleteRoutine,
       // Attendance & course actions
       recordAttendance,
+      recordMissedClass,
       undoAttendance,
+      undoLastMissed,
+      updateMissedRecord,
+      deleteMissedRecord,
       addCourse,
       updateCourse,
       deleteCourse,
+      // Inline course assessment actions
+      addAssessmentToCourse,
+      updateAssessmentInCourse,
+      deleteAssessmentFromCourse,
+      toggleAssessmentMissed,
       // Assessments actions
       addAssessment,
       updateAssessment,

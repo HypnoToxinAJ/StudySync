@@ -28,7 +28,8 @@ const KEYS = {
   TASKS: 'studysync_tasks',
   FOCUS: 'studysync_focus',
   DISMISSED_ALERTS: 'studysync_dismissed_alerts',
-  SETTINGS: 'studysync_settings'
+  SETTINGS: 'studysync_settings',
+  STORAGE_VERSION: 'studysync_storage_v2'
 };
 
 export const storageService = {
@@ -49,6 +50,70 @@ export const storageService = {
       localStorage.setItem(key, JSON.stringify(value));
     } catch (e) {
       console.error(`Error writing ${key} to localStorage:`, e);
+    }
+  },
+
+  // Migration helper to normalize courses for missed-class tracking & course types
+  migrateCourseData: () => {
+    const existingCourses = storageService.get(KEYS.COURSES, null);
+    if (!existingCourses || !Array.isArray(existingCourses)) return;
+
+    let hasChanges = false;
+    const updatedCourses = existingCourses.map(course => {
+      let modified = false;
+      const titleLower = String(course.courseTitle || '').toLowerCase();
+      const codeLower = String(course.courseId || '').toLowerCase();
+      const credit = Number(course.credit || 3.0);
+
+      // Infer courseType if missing
+      let courseType = course.courseType;
+      if (!courseType) {
+        modified = true;
+        if (titleLower.includes('lab') || codeLower.includes('lab')) {
+          courseType = 'lab';
+        } else if (titleLower.includes('sessional') || codeLower.includes('sessional')) {
+          courseType = 'sessional';
+        } else if (credit === 1.5 || credit === 0.75) {
+          courseType = 'lab';
+        } else if (credit === 3.0 || credit === 2.0) {
+          courseType = 'theory';
+        } else {
+          courseType = 'theory';
+          course.requiresReview = true;
+        }
+      }
+
+      const isTheory = courseType === 'theory';
+      const assessmentApplicable = isTheory;
+      const bestAssessmentCount = isTheory ? (credit === 2.0 ? 2 : 3) : 0;
+
+      if (course.courseType !== courseType) {
+        course.courseType = courseType;
+        modified = true;
+      }
+      if (course.assessmentApplicable !== assessmentApplicable) {
+        course.assessmentApplicable = assessmentApplicable;
+        modified = true;
+      }
+      if (course.bestAssessmentCount !== bestAssessmentCount) {
+        course.bestAssessmentCount = bestAssessmentCount;
+        modified = true;
+      }
+      if (course.missedClasses === undefined) {
+        course.missedClasses = Number(course.missedClasses || 0);
+        modified = true;
+      }
+      if (!course.history) {
+        course.history = [];
+        modified = true;
+      }
+
+      if (modified) hasChanges = true;
+      return course;
+    });
+
+    if (hasChanges) {
+      storageService.set(KEYS.COURSES, updatedCourses);
     }
   },
 
@@ -90,6 +155,9 @@ export const storageService = {
         { grade: 'F', point: 0.00, minMark: 0 }
       ]
     });
+
+    // Run safe data migration for courses
+    storageService.migrateCourseData();
   },
 
   // Reset to default mock data

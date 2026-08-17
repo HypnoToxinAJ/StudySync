@@ -20,13 +20,15 @@ export const initialCourses = [
     courseId: "CSE-311",
     courseTitle: "Database Management Systems",
     credit: 3.0,
+    courseType: "theory",
     faculty: "Dr. Al-Mamun",
     semester: "5th Semester",
     color: "#4F46E5", // Indigo
-    totalClasses: 22,
-    attendedClasses: 20,
     missedClasses: 2,
-    attendanceGoal: 85,
+    history: [
+      { id: "hist-1", courseId: "course-1", date: "2026-06-12", status: "missed", classType: "theory", reason: "Medical Appointment" },
+      { id: "hist-2", courseId: "course-1", date: "2026-07-04", status: "missed", classType: "theory", reason: "Traffic Delay" }
+    ],
     assessments: [
       { id: "ast-1", name: "CT 1: ER Diagram & Relational Algebra", type: "CT", totalMarks: 20, expectedMarks: 18, obtainedMarks: 17, date: "2026-06-10", isMissed: false },
       { id: "ast-2", name: "CT 2: SQL Queries & Normalization", type: "CT", totalMarks: 20, expectedMarks: 19, obtainedMarks: 19, date: "2026-07-02", isMissed: false },
@@ -39,13 +41,12 @@ export const initialCourses = [
     courseId: "CSE-312",
     courseTitle: "Database Management Systems Lab",
     credit: 1.5,
+    courseType: "lab",
     faculty: "Inst. Farhana Yashmin",
     semester: "5th Semester",
     color: "#06B6D4", // Cyan
-    totalClasses: 10,
-    attendedClasses: 10,
     missedClasses: 0,
-    attendanceGoal: 90,
+    history: [],
     assessments: [
       { id: "ast-5", name: "Lab Test 1: Oracle SQL", type: "CT", totalMarks: 20, expectedMarks: 19, obtainedMarks: 18.5, date: "2026-06-20", isMissed: false },
       { id: "ast-6", name: "Lab Project: Library Portal", type: "assignment", totalMarks: 20, expectedMarks: 20, obtainedMarks: 20, date: "2026-07-22", isMissed: false },
@@ -56,13 +57,17 @@ export const initialCourses = [
     courseId: "CSE-313",
     courseTitle: "Computer Networks",
     credit: 3.0,
+    courseType: "theory",
     faculty: "Prof. Shahadat Hossain",
     semester: "5th Semester",
     color: "#F59E0B", // Amber
-    totalClasses: 21,
-    attendedClasses: 17,
-    missedClasses: 4, // 4 missed classes for 3 credit -> Exceeds allowed 3! Warning!
-    attendanceGoal: 85,
+    missedClasses: 4, // 4 missed classes for 3 credit -> Exceeds allowed 3! Deduction Risk!
+    history: [
+      { id: "hist-3", courseId: "course-3", date: "2026-06-14", status: "missed", classType: "theory", reason: "Fever" },
+      { id: "hist-4", courseId: "course-3", date: "2026-06-21", status: "missed", classType: "theory", reason: "Family Event" },
+      { id: "hist-5", courseId: "course-3", date: "2026-07-05", status: "missed", classType: "theory", reason: "Lab Preparation" },
+      { id: "hist-6", courseId: "course-3", date: "2026-07-19", status: "missed", classType: "theory", reason: "Unwell" }
+    ],
     assessments: [
       { id: "ast-7", name: "CT 1: OSI Model & IP Addressing", type: "CT", totalMarks: 20, expectedMarks: 17, obtainedMarks: 16, date: "2026-06-14", isMissed: false },
       { id: "ast-8", name: "CT 2: TCP/UDP & Routing Protocols", type: "CT", totalMarks: 20, expectedMarks: 18, obtainedMarks: 15, date: "2026-07-10", isMissed: false },
@@ -74,13 +79,14 @@ export const initialCourses = [
     courseId: "CSE-315",
     courseTitle: "Software Engineering & Agile",
     credit: 3.0,
+    courseType: "theory",
     faculty: "Dr. Sabrina Alam",
     semester: "5th Semester",
     color: "#10B981", // Emerald
-    totalClasses: 19,
-    attendedClasses: 18,
     missedClasses: 1,
-    attendanceGoal: 80,
+    history: [
+      { id: "hist-7", courseId: "course-4", date: "2026-07-08", status: "missed", classType: "theory", reason: "Heavy Rain" }
+    ],
     assessments: [
       { id: "ast-10", name: "CT 1: Software Lifecycles & Requirements", type: "CT", totalMarks: 20, expectedMarks: 19, obtainedMarks: 18, date: "2026-06-18", isMissed: false },
       { id: "ast-11", name: "CT 2: Design Patterns & UML", type: "CT", totalMarks: 20, expectedMarks: 18, obtainedMarks: 17.5, date: "2026-07-12", isMissed: false },
@@ -88,20 +94,36 @@ export const initialCourses = [
   },
   {
     id: "course-5",
-    courseId: "MATH-301",
-    courseTitle: "Linear Algebra & Complex Variables",
-    credit: 3.0,
-    faculty: "Prof. Dr. Jalal Uddin",
+    courseId: "HUM-303",
+    courseTitle: "Engineering Economics & Management",
+    credit: 2.0,
+    courseType: "theory",
+    faculty: "Dr. Nazrul Islam",
     semester: "5th Semester",
-    color: "#EF4444", // Rose / Red
-    totalClasses: 20,
-    attendedClasses: 15,
-    missedClasses: 5, // 5 missed classes for 3 credit -> AT RISK!
-    attendanceGoal: 80,
-    assessments: [
-      { id: "ast-12", name: "CT 1: Vector Spaces & Eigenvalues", type: "CT", totalMarks: 20, expectedMarks: 16, obtainedMarks: 14, date: "2026-06-25", isMissed: false },
-      { id: "ast-13", name: "CT 2: Complex Integration", type: "CT", totalMarks: 20, expectedMarks: 17, obtainedMarks: 13.5, date: "2026-07-14", isMissed: false },
+    color: "#8B5CF6", // Purple
+    missedClasses: 2, // 2 missed for 2 credit -> Limit reached!
+    history: [
+      { id: "hist-8", courseId: "course-5", date: "2026-06-28", status: "missed", classType: "theory", reason: "Sessional Submission" },
+      { id: "hist-9", courseId: "course-5", date: "2026-07-16", status: "missed", classType: "theory", reason: "Personal work" }
     ],
+    assessments: [
+      { id: "ast-14", name: "CT 1: Cost Estimation & Inflation", type: "CT", totalMarks: 20, expectedMarks: 18, obtainedMarks: 17.5, date: "2026-06-22", isMissed: false },
+      { id: "ast-15", name: "CT 2: Break-even Analysis", type: "CT", totalMarks: 20, expectedMarks: 19, obtainedMarks: 18.5, date: "2026-07-11", isMissed: false },
+      { id: "ast-16", name: "Assignment: Case Study Analysis", type: "assignment", totalMarks: 20, expectedMarks: 18, obtainedMarks: 16.0, date: "2026-07-20", isMissed: false },
+    ],
+  },
+  {
+    id: "course-6",
+    courseId: "CSE-314",
+    courseTitle: "Computer Networks Sessional",
+    credit: 0.75,
+    courseType: "sessional",
+    faculty: "Inst. Tanvir Hasan",
+    semester: "5th Semester",
+    color: "#EC4899", // Pink
+    missedClasses: 0, // 0 missed -> No absence allowed state
+    history: [],
+    assessments: [],
   },
 ];
 
