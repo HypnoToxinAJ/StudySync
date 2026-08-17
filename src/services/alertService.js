@@ -1,7 +1,33 @@
 import { storageService } from './storageService';
 import { attendanceService } from './attendanceService';
-import { tuitionService } from './tuitionService';
 import { expenseService } from './expenseService';
+
+const TUITION_KEYWORDS = [
+  'tuition',
+  'tuition class',
+  'tuition payment',
+  'tuition fee',
+  'tuition income',
+  'tuition student',
+  'overdue tuition'
+];
+
+export const isTuitionRelated = (alert) => {
+  if (!alert) return false;
+  const fields = [
+    alert.source,
+    alert.module,
+    alert.category,
+    alert.type,
+    alert.title,
+    alert.message,
+    alert.course
+  ]
+    .filter(Boolean)
+    .map(val => String(val).toLowerCase());
+
+  return fields.some(field => TUITION_KEYWORDS.some(kw => field.includes(kw)));
+};
 
 export const alertService = {
   getDismissedAlertIds: () => {
@@ -16,11 +42,30 @@ export const alertService = {
     }
   },
 
+  dismissAllAlerts: (alertsToDismiss = []) => {
+    const dismissed = alertService.getDismissedAlertIds();
+    const newDismissedIds = [];
+    alertsToDismiss.forEach(alert => {
+      if (alert?.id && !dismissed.includes(alert.id)) {
+        dismissed.push(alert.id);
+        newDismissedIds.push(alert.id);
+      }
+    });
+    storageService.set(storageService.KEYS.DISMISSED_ALERTS, dismissed);
+    return newDismissedIds;
+  },
+
+  undoDismissAlerts: (alertIdsToRestore = []) => {
+    let dismissed = alertService.getDismissedAlertIds();
+    dismissed = dismissed.filter(id => !alertIdsToRestore.includes(id));
+    storageService.set(storageService.KEYS.DISMISSED_ALERTS, dismissed);
+  },
+
   restoreAllAlerts: () => {
     storageService.set(storageService.KEYS.DISMISSED_ALERTS, []);
   },
 
-  // Synthesize unified list of active alert widgets
+  // Synthesize unified list of active alert widgets (centralized selector filtering out all tuition alerts)
   getActiveAlerts: () => {
     const dismissed = alertService.getDismissedAlertIds();
     const alerts = [];
@@ -38,15 +83,18 @@ export const alertService = {
 
         alerts.push({
           id,
-          title: ast.title,
+          source: 'assessments',
+          module: 'assessments',
+          title: ast.title || `${ast.type?.toUpperCase()} - ${ast.courseId}`,
           course: ast.courseId,
           date: `${ast.date} ${ast.startTime || ''}`,
           remainingTime: `${ast.date === today ? 'Today' : 'Upcoming'}`,
-          type: ast.type,
+          type: ast.type || 'Assessment',
           priority,
           category,
           actionPath,
-          message: `Syllabus: ${ast.syllabus || 'Review lecture notes'}`
+          message: `Syllabus: ${ast.syllabus || 'Review lecture notes'}`,
+          dismissible: true
         });
       }
     });
@@ -59,6 +107,8 @@ export const alertService = {
         const id = `alert-att-${c.id}`;
         alerts.push({
           id,
+          source: 'attendance',
+          module: 'attendance',
           title: `Attendance Warning: ${c.courseId}`,
           course: c.courseTitle,
           date: 'Immediate Action',
@@ -67,37 +117,20 @@ export const alertService = {
           priority: 'high',
           category: 'Attendance',
           actionPath: '/attendance',
-          message: `You have missed ${stats.missed} classes out of ${stats.allowedMissed} allowed limit. Further absences may deduct marks!`
+          message: `You have missed ${stats.missed} classes out of ${stats.allowedMissed} allowed limit. Further absences may deduct marks!`,
+          dismissible: true
         });
       }
     });
 
-    // 3. Tuition overdue alerts
-    const tuitions = tuitionService.getStudents();
-    tuitions.forEach(t => {
-      if (t.paymentStatus === 'overdue' || t.paymentStatus === 'pending') {
-        const id = `alert-tuition-${t.id}`;
-        alerts.push({
-          id,
-          title: `Tuition Payment Pending: ${t.studentName}`,
-          course: `${t.subject} (${t.classGrade})`,
-          date: t.expectedPaymentDate || 'This Month',
-          remainingTime: `৳ ${t.monthlySalary}`,
-          type: 'Tuition Income',
-          priority: 'medium',
-          category: 'Finance',
-          actionPath: '/tuition',
-          message: `Expected salary of ৳${t.monthlySalary} is pending. Guardian: ${t.guardianContact}`
-        });
-      }
-    });
-
-    // 4. Expense Budget Limit alerts
+    // 3. Expense Budget Limit alerts
     const summary = expenseService.getFinancialSummary();
     if (summary.budgetUsedPercentage >= 85) {
       const id = `alert-budget-warning`;
       alerts.push({
         id,
+        source: 'expenses',
+        module: 'expenses',
         title: `Monthly Budget Limit Warning`,
         course: 'Personal Expenses',
         date: 'Current Month',
@@ -106,11 +139,12 @@ export const alertService = {
         priority: 'high',
         category: 'Finance',
         actionPath: '/expenses',
-        message: `You have spent ৳${summary.monthlyExpense} out of ৳${summary.budgetLimit} monthly budget limit!`
+        message: `You have spent ৳${summary.monthlyExpense} out of ৳${summary.budgetLimit} monthly budget limit!`,
+        dismissible: true
       });
     }
 
-    // Filter out user-dismissed alerts
-    return alerts.filter(a => !dismissed.includes(a.id));
+    // Filter out tuition-related items and user-dismissed alerts at the centralized service level
+    return alerts.filter(alert => !isTuitionRelated(alert) && !dismissed.includes(alert.id));
   }
 };

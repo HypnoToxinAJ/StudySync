@@ -23,13 +23,16 @@ import {
   RotateCcw,
   CheckCircle2,
   Search,
-  AlertTriangle
+  AlertTriangle,
+  CheckCheck
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { StatCard } from '../components/common/StatCard';
 import { Badge } from '../components/common/Badge';
 import { Modal } from '../components/common/Modal';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { ShortcutIconResolver } from '../components/common/shortcutIconResolver';
 import { mockQuotes } from '../data/mockData';
 import { shortcutService } from '../services/shortcutService';
 import { cgpaService } from '../services/cgpaService';
@@ -41,6 +44,7 @@ export const DashboardPage = () => {
   const {
     activeAlerts,
     dismissAlert,
+    dismissAllAlerts,
     restoreAlerts,
     shortcuts,
     addShortcut,
@@ -340,8 +344,8 @@ export const DashboardPage = () => {
           actionLabel="Check Attendance"
           onClick={() => window.location.hash = '/attendance'}
         />
-        <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-4">
-          <div className="flex items-center justify-between gap-3">
+        <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between h-[420px] gap-3">
+          <div className="flex items-center justify-between gap-3 shrink-0">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Notes</p>
               <h3 className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white">{visibleNotes.length} active notes</h3>
@@ -351,8 +355,8 @@ export const DashboardPage = () => {
             </div>
           </div>
 
-          <div className="space-y-3 flex-1">
-            {visibleNotes.slice(0, 2).map((note) => (
+          <div className="space-y-2.5 flex-1 overflow-y-auto overflow-x-hidden pr-1.5 my-1 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700">
+            {visibleNotes.map((note) => (
               <button
                 key={note.id}
                 type="button"
@@ -378,15 +382,15 @@ export const DashboardPage = () => {
           <button
             type="button"
             onClick={() => openNoteComposer()}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 px-4 py-2.5 text-xs font-bold text-white transition-colors"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 px-4 py-2.5 text-xs font-bold text-white transition-colors shrink-0 pt-2.5 border-t border-slate-100 dark:border-slate-800"
           >
             <Edit2 className="w-4 h-4" />
             <span>New Note</span>
           </button>
         </div>
 
-        <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-4">
-          <div className="flex items-center justify-between gap-3">
+        <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between h-[420px] gap-3">
+          <div className="flex items-center justify-between gap-3 shrink-0">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Medication</p>
               <h3 className="mt-1 text-lg font-extrabold text-slate-900 dark:text-white">{activeMedications.filter((medication) => medication.status === 'Active').length} active plans</h3>
@@ -396,8 +400,8 @@ export const DashboardPage = () => {
             </div>
           </div>
 
-          <div className="space-y-3 flex-1">
-            {activeMedications.slice(0, 2).map((medication) => (
+          <div className="space-y-2.5 flex-1 overflow-y-auto overflow-x-hidden pr-1.5 my-1 scrollbar-thin scrollbar-thumb-slate-300 dark:scrollbar-thumb-slate-700">
+            {activeMedications.map((medication) => (
               <button
                 key={medication.id}
                 type="button"
@@ -425,7 +429,7 @@ export const DashboardPage = () => {
           <button
             type="button"
             onClick={() => openMedicationComposer()}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 px-4 py-2.5 text-xs font-bold text-white transition-colors"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 px-4 py-2.5 text-xs font-bold text-white transition-colors shrink-0 pt-2.5 border-t border-slate-100 dark:border-slate-800"
           >
             <Plus className="w-4 h-4" />
             <span>Add Medication</span>
@@ -441,13 +445,22 @@ export const DashboardPage = () => {
               <AlertTriangle className="w-5 h-5 text-amber-500" />
               <span>Priority Alerts & Reminders ({activeAlerts.length})</span>
             </h3>
-            <button
-              onClick={restoreAlerts}
-              className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center space-x-1"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Restore Dismissed Alerts</span>
-            </button>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setIsConfirmDismissAllOpen(true)}
+                className="text-xs font-bold text-rose-500 hover:text-rose-600 dark:hover:text-rose-400 flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 transition-colors"
+              >
+                <CheckCheck className="w-3.5 h-3.5" />
+                <span>Dismiss All</span>
+              </button>
+              <button
+                onClick={restoreAlerts}
+                className="text-xs font-semibold text-brand-600 dark:text-brand-400 hover:underline flex items-center space-x-1"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Restore Alerts</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -569,7 +582,7 @@ export const DashboardPage = () => {
                   className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold mb-2 shadow-md"
                   style={{ backgroundColor: sc.color || '#4F46E5' }}
                 >
-                  {renderShortcutIcon(sc)}
+                  <ShortcutIconResolver shortcut={sc} className="w-5 h-5" />
                 </div>
                 <span className="text-xs font-bold text-slate-900 dark:text-white truncate max-w-full">
                   {sc.name}
@@ -957,6 +970,17 @@ export const DashboardPage = () => {
           </div>
         </form>
       </Modal>
+
+      <ConfirmDialog
+        isOpen={isConfirmDismissAllOpen}
+        onClose={() => setIsConfirmDismissAllOpen(false)}
+        onConfirm={() => {
+          dismissAllAlerts();
+          setIsConfirmDismissAllOpen(false);
+        }}
+        title="Dismiss All Priority Alerts?"
+        message={`Are you sure you want to dismiss all ${activeAlerts.length} active alerts? You can undo this action from the toast notification.`}
+      />
     </div>
   );
 };

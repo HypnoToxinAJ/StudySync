@@ -1,57 +1,5 @@
 import { storageService } from './storageService';
-
-const BRAND_ICON_MAP = [
-  {
-    hosts: ['github.com', 'www.github.com', 'gist.github.com'],
-    icon: { type: 'brand', name: 'github' },
-    color: '#111827',
-  },
-  {
-    hosts: ['drive.google.com', 'docs.google.com', 'sheets.google.com', 'slides.google.com', 'calendar.google.com', 'mail.google.com'],
-    icon: { type: 'brand', name: 'google-drive' },
-    color: '#3B82F6',
-  },
-  {
-    hosts: ['linkedin.com', 'www.linkedin.com'],
-    icon: { type: 'brand', name: 'linkedin' },
-    color: '#0A66C2',
-  },
-  {
-    hosts: ['discord.com', 'discord.gg'],
-    icon: { type: 'brand', name: 'discord' },
-    color: '#5865F2',
-  },
-  {
-    hosts: ['x.com', 'twitter.com', 'www.x.com', 'www.twitter.com'],
-    icon: { type: 'brand', name: 'x-twitter' },
-    color: '#111827',
-  },
-  {
-    hosts: ['stackoverflow.com'],
-    icon: { type: 'brand', name: 'stack-overflow' },
-    color: '#F97316',
-  },
-  {
-    hosts: ['openai.com', 'chatgpt.com'],
-    icon: { type: 'brand', name: 'openai' },
-    color: '#10B981',
-  },
-  {
-    hosts: ['claude.ai', 'anthropic.com'],
-    icon: { type: 'solid', name: 'sparkles' },
-    color: '#D97706',
-  },
-  {
-    hosts: ['notion.so', 'www.notion.so'],
-    icon: { type: 'solid', name: 'note-sticky' },
-    color: '#111827',
-  },
-  {
-    hosts: ['overleaf.com', 'www.overleaf.com'],
-    icon: { type: 'solid', name: 'file-lines' },
-    color: '#06B6D4',
-  },
-];
+import { resolveShortcutIcon } from '../components/common/shortcutIconResolver';
 
 const normalizeShortcutUrl = (value) => {
   if (!value) return null;
@@ -65,49 +13,48 @@ const normalizeShortcutUrl = (value) => {
 const slugifyHostname = (hostname = '') => hostname.replace(/^www\./, '').split('.').slice(-2).join('.');
 
 const inferCategoryFromHost = (hostname = '') => {
-  if (hostname.includes('github') || hostname.includes('gitlab') || hostname.includes('bitbucket')) return 'Coding';
-  if (hostname.includes('google') || hostname.includes('drive') || hostname.includes('docs')) return 'Academic Cloud';
+  if (hostname.includes('github') || hostname.includes('gitlab') || hostname.includes('bitbucket') || hostname.includes('stackoverflow')) return 'Coding';
+  if (hostname.includes('google') || hostname.includes('drive') || hostname.includes('docs') || hostname.includes('overleaf')) return 'Academic Cloud';
   if (hostname.includes('mail') || hostname.includes('outlook') || hostname.includes('gmail')) return 'Email';
-  if (hostname.includes('calendar')) return 'Planning';
-  if (hostname.includes('edu') || hostname.includes('ac.bd') || hostname.includes('university')) return 'University Portal';
+  if (hostname.includes('calendar') || hostname.includes('notion')) return 'Planning';
+  if (hostname.includes('chatgpt') || hostname.includes('openai') || hostname.includes('claude') || hostname.includes('anthropic')) return 'AI Tools';
+  if (hostname.includes('edu') || hostname.includes('ac.bd') || hostname.includes('university') || hostname.includes('portal') || hostname.includes('lms')) return 'University Portal';
   return 'Personal';
 };
 
-const platformFromUrl = (urlStr) => {
+const platformFromUrl = (urlStr, category = '') => {
   const parsed = normalizeShortcutUrl(urlStr);
+  const resolved = resolveShortcutIcon(urlStr, category);
+
   if (!parsed) {
     return {
       platform: 'unknown',
       hostname: '',
       displayName: urlStr || 'Shortcut',
-      category: 'Personal',
-      icon: { type: 'solid', name: 'globe' },
-      color: '#4F46E5',
+      category: category || 'Personal',
+      color: resolved.color || '#4F46E5',
     };
   }
 
   const hostname = parsed.hostname.toLowerCase();
-  const matched = BRAND_ICON_MAP.find(entry => entry.hosts.some(host => hostname === host || hostname.endsWith(`.${host}`)));
   const slug = slugifyHostname(hostname);
 
   return {
-    platform: matched?.icon?.name || slug,
+    platform: resolved.name || slug,
     hostname,
     displayName: slug,
-    category: inferCategoryFromHost(hostname),
-    icon: matched?.icon || { type: 'solid', name: 'globe' },
-    color: matched?.color || '#4F46E5',
+    category: category || inferCategoryFromHost(hostname),
+    color: resolved.color || '#4F46E5',
   };
 };
 
 const applyDetectedMetadata = (shortcutData) => {
-  const detection = platformFromUrl(shortcutData.url);
+  const detection = platformFromUrl(shortcutData.url, shortcutData.category);
   return {
     ...shortcutData,
-    color: detection.color,
+    color: shortcutData.color || detection.color,
     category: shortcutData.category || detection.category,
-    icon: detection.icon,
-    displayName: detection.displayName,
+    displayName: shortcutData.displayName || detection.displayName,
     hostname: detection.hostname,
     platform: detection.platform,
   };
@@ -161,11 +108,9 @@ export const shortcutService = {
     }
   },
 
-  // Smart icon suggestion based on URL domain
-  suggestIconAndColor: (urlStr) => {
-    const detection = platformFromUrl(urlStr);
+  suggestIconAndColor: (urlStr, category = '') => {
+    const detection = platformFromUrl(urlStr, category);
     return {
-      icon: detection.icon,
       color: detection.color,
       category: detection.category,
       displayName: detection.displayName,

@@ -7,9 +7,13 @@ const ToastContext = createContext();
 export const ToastProvider = ({ children }) => {
   const [toasts, setToasts] = useState([]);
 
-  const showToast = (message, type = 'success', duration = 4000) => {
+  const showToast = (message, type = 'success', options = {}) => {
+    const duration = typeof options === 'number' ? options : options?.duration || 4000;
+    const actionLabel = typeof options === 'object' ? options?.actionLabel : null;
+    const onAction = typeof options === 'object' ? options?.onAction : null;
+
     const id = `toast-${Date.now()}-${Math.random()}`;
-    setToasts(prev => [...prev, { id, message, type }]);
+    setToasts(prev => [...prev, { id, message, type, actionLabel, onAction }]);
 
     setTimeout(() => {
       removeToast(id);
@@ -40,19 +44,34 @@ export const ToastProvider = ({ children }) => {
                 'bg-indigo-900/90 text-indigo-100 border-indigo-500/40'
               }`}
             >
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-3 min-w-0 pr-2">
                 {toast.type === 'success' && <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />}
                 {toast.type === 'warning' && <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />}
                 {toast.type === 'error' && <AlertCircle className="w-5 h-5 text-rose-400 shrink-0" />}
                 {toast.type === 'info' && <Info className="w-5 h-5 text-indigo-400 shrink-0" />}
-                <span className="text-sm font-medium">{toast.message}</span>
+                <span className="text-sm font-medium truncate">{toast.message}</span>
               </div>
-              <button
-                onClick={() => removeToast(toast.id)}
-                className="ml-3 text-slate-300 hover:text-white transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
+
+              <div className="flex items-center space-x-2 shrink-0">
+                {toast.actionLabel && toast.onAction && (
+                  <button
+                    onClick={() => {
+                      toast.onAction();
+                      removeToast(toast.id);
+                    }}
+                    className="px-2.5 py-1 bg-white/20 hover:bg-white/30 text-white font-bold text-xs rounded-lg transition-colors"
+                  >
+                    {toast.actionLabel}
+                  </button>
+                )}
+                <button
+                  onClick={() => removeToast(toast.id)}
+                  className="text-slate-300 hover:text-white transition-colors p-0.5"
+                  aria-label="Close notification"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </motion.div>
           ))}
         </AnimatePresence>

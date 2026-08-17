@@ -9,13 +9,15 @@ import {
   Sun,
   DollarSign,
   GraduationCap,
-  CheckCircle2
+  CheckCircle2,
+  User
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useData } from '../context/DataContext';
 import { storageService } from '../services/storageService';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
+import { AvatarPicker } from '../components/profile/AvatarPicker';
 
 export const SettingsPage = () => {
   const { user, setUser } = useAuth();
@@ -58,13 +60,16 @@ export const SettingsPage = () => {
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
         <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center space-x-2">
-          <Settings className="w-6 h-6 text-brand-500" />
-          <span>Application Settings & Preferences</span>
+          <User className="w-6 h-6 text-brand-500" />
+          <span>Profile & Settings</span>
         </h2>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Configure grading scales, attendance rules, currency, theme preferences, and data backups
+          Manage your student avatar persona, theme appearance, currency, and data backups
         </p>
       </div>
+
+      {/* AVATAR SELECTION SECTION */}
+      <AvatarPicker />
 
       {/* THEME & VISUAL PREFERENCES */}
       <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">

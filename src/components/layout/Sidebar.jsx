@@ -9,13 +9,13 @@ import {
   Banknote,
   Wallet,
   Zap,
-  Settings,
   ChevronLeft,
   ChevronRight,
   LogOut
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
+import { UserAvatar } from '../common/UserAvatar';
 
 export const Sidebar = ({ isCollapsed, onToggle }) => {
   const { user, logout } = useAuth();
@@ -30,7 +30,6 @@ export const Sidebar = ({ isCollapsed, onToggle }) => {
     { label: 'Tuition Tracker', path: '/tuition', icon: Banknote },
     { label: 'Expense Tracker', path: '/expenses', icon: Wallet },
     { label: 'Focus Mode', path: '/focus', icon: Zap },
-    { label: 'Settings', path: '/settings', icon: Settings },
   ];
 
   return (
@@ -102,9 +101,7 @@ export const Sidebar = ({ isCollapsed, onToggle }) => {
       <div className="p-3 border-t border-slate-100 dark:border-slate-800">
         <div className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'} p-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/50 dark:border-slate-800`}>
           <div className="flex items-center space-x-3 overflow-hidden">
-            <div className="w-8 h-8 rounded-full bg-cyanBrand-500 text-white font-bold text-xs flex items-center justify-center shrink-0">
-              {user?.name?.slice(0, 2).toUpperCase() || 'ST'}
-            </div>
+            <UserAvatar user={user} size="sm" />
             {!isCollapsed && (
               <div className="truncate">
                 <p className="text-xs font-bold text-slate-900 dark:text-white truncate">

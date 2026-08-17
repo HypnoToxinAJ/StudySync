@@ -339,6 +339,23 @@ export const DataProvider = ({ children }) => {
     showToast('Alert dismissed');
   };
 
+  const dismissAllAlerts = () => {
+    const currentAlerts = alertService.getActiveAlerts();
+    if (currentAlerts.length === 0) return;
+    const dismissedIds = alertService.dismissAllAlerts(currentAlerts);
+    refreshData();
+    showToast('All visible notifications dismissed', 'info', {
+      actionLabel: 'Undo',
+      onAction: () => undoDismissAlerts(dismissedIds)
+    });
+  };
+
+  const undoDismissAlerts = (ids) => {
+    alertService.undoDismissAlerts(ids);
+    refreshData();
+    showToast('Dismissed notifications restored', 'success');
+  };
+
   const restoreAlerts = () => {
     alertService.restoreAllAlerts();
     refreshData();
@@ -427,6 +444,8 @@ export const DataProvider = ({ children }) => {
       logMedicationDose,
       // Alert & Task actions
       dismissAlert,
+      dismissAllAlerts,
+      undoDismissAlerts,
       restoreAlerts,
       toggleTask,
       addTask,

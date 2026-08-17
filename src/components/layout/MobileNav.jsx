@@ -10,14 +10,13 @@ import {
   Banknote,
   Wallet,
   Zap,
-  Settings,
   X,
   LogOut
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export const MobileNav = ({ isOpen, onClose }) => {
-  const { user, logout } = useAuth();
+  const { logout } = useAuth();
 
   const navItems = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -28,7 +27,6 @@ export const MobileNav = ({ isOpen, onClose }) => {
     { label: 'Tuition Tracker', path: '/tuition', icon: Banknote },
     { label: 'Expense Tracker', path: '/expenses', icon: Wallet },
     { label: 'Focus Mode', path: '/focus', icon: Zap },
-    { label: 'Settings', path: '/settings', icon: Settings },
   ];
 
   return (

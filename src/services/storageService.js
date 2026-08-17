@@ -54,7 +54,14 @@ export const storageService = {
 
   // Initialize all storage keys with mock data if not present
   initialize: () => {
-    if (!localStorage.getItem(KEYS.USER)) storageService.set(KEYS.USER, initialUserData);
+    if (!localStorage.getItem(KEYS.USER)) {
+      storageService.set(KEYS.USER, { ...initialUserData, avatar: 'avatar-scholar' });
+    } else {
+      const existingUser = storageService.get(KEYS.USER, {});
+      if (existingUser && !existingUser.avatar) {
+        storageService.set(KEYS.USER, { ...existingUser, avatar: 'avatar-scholar' });
+      }
+    }
     if (!localStorage.getItem(KEYS.COURSES)) storageService.set(KEYS.COURSES, initialCourses);
     if (!localStorage.getItem(KEYS.ROUTINES)) storageService.set(KEYS.ROUTINES, initialRoutines);
     if (!localStorage.getItem(KEYS.ASSESSMENTS)) storageService.set(KEYS.ASSESSMENTS, initialAssessments);
