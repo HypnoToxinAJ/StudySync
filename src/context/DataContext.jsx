@@ -29,6 +29,7 @@ export const DataProvider = ({ children }) => {
   const [tasks, setTasks] = useState([]);
   const [focusData, setFocusData] = useState({ totalMinutesThisWeek: 0, sessionsCompletedThisWeek: 0 });
   const [activeAlerts, setActiveAlerts] = useState([]);
+  const [sidebarPreferences, setSidebarPreferences] = useState(null);
 
   // Reload all domain states from storage
   const refreshData = () => {
@@ -46,11 +47,17 @@ export const DataProvider = ({ children }) => {
     setTasks(storageService.get(storageService.KEYS.TASKS, []));
     setFocusData(focusService.getData());
     setActiveAlerts(alertService.getActiveAlerts());
+    setSidebarPreferences(storageService.get(storageService.KEYS.SIDEBAR_PREFERENCES, null));
   };
 
   useEffect(() => {
     refreshData();
   }, []);
+
+  const updateSidebarPreferences = (preferences) => {
+    storageService.set(storageService.KEYS.SIDEBAR_PREFERENCES, preferences);
+    setSidebarPreferences(preferences);
+  };
 
   // --- Routine Handlers ---
   const addRoutine = (data) => {
@@ -449,7 +456,9 @@ export const DataProvider = ({ children }) => {
       tasks,
       focusData,
       activeAlerts,
+      sidebarPreferences,
       refreshData,
+      updateSidebarPreferences,
       // Routine actions
       addRoutine,
       updateRoutine,

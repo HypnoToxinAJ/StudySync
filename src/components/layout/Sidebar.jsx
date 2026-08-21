@@ -27,7 +27,7 @@ export const Sidebar = ({ isCollapsed, onToggle }) => {
 
   return (
     <aside
-      className={`relative hidden lg:flex flex-col border-r border-slate-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/90 backdrop-blur-xl transition-all duration-300 z-30 ${isCollapsed ? 'w-20' : 'w-64'
+      className={`sticky top-0 h-screen shrink-0 hidden lg:flex flex-col border-r border-slate-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/90 backdrop-blur-xl transition-all duration-300 z-30 overflow-hidden ${isCollapsed ? 'w-20' : 'w-64'
         }`}
     >
       {/* Brand Logo */}
