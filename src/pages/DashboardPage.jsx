@@ -665,32 +665,62 @@ export const DashboardPage = () => {
           </div>
         </div>
 
-        {/* FOCUS & STUDY SUMMARY PANEL */}
+        {/* FOCUS & STUDY WORKSPACE LAUNCHER */}
         <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4">
           <div>
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2">
                 <Zap className="w-5 h-5 text-amber-500" />
-                <span>Focus Minutes</span>
+                <span>Focus Workspaces</span>
               </h3>
-              <Badge variant="amber">{focusData.currentStreakDays} Day Streak</Badge>
+              <Badge variant="emerald">Distraction-Free</Badge>
             </div>
-            <div className="mt-4 text-center p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200/60 dark:border-slate-700/60">
-              <h4 className="text-4xl font-extrabold text-brand-600 dark:text-brand-400 tracking-tight">
-                {focusData.totalMinutesThisWeek}
-              </h4>
-              <p className="text-xs font-bold text-slate-500 dark:text-slate-400 mt-1 uppercase tracking-wider">
-                Minutes Focused This Week
-              </p>
+            
+            <div className="mt-4 space-y-2.5">
+              <a
+                href="#/focus"
+                className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-rose-500/10 hover:border-rose-500/30 border border-slate-200/60 dark:border-slate-700/60 transition-all flex items-center justify-between group"
+              >
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold">
+                    ▶
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-rose-500 transition-colors">
+                      YouTube Study Player
+                    </h4>
+                    <p className="text-[10px] text-slate-400">Zero recommendations & comments</p>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-rose-500 group-hover:translate-x-0.5 transition-transform">→</span>
+              </a>
+
+              <a
+                href="#/focus"
+                className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-indigo-500/10 hover:border-indigo-500/30 border border-slate-200/60 dark:border-slate-700/60 transition-all flex items-center justify-between group"
+              >
+                <div className="flex items-center space-x-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                    <FileText className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-indigo-500 transition-colors">
+                      PDF Study Viewer
+                    </h4>
+                    <p className="text-[10px] text-slate-400">Search, markup & annotations</p>
+                  </div>
+                </div>
+                <span className="text-xs font-bold text-indigo-500 group-hover:translate-x-0.5 transition-transform">→</span>
+              </a>
             </div>
           </div>
 
           <button
             onClick={() => window.location.hash = '/focus'}
-            className="w-full py-3 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2"
+            className="w-full py-3 bg-slate-900 dark:bg-slate-800 hover:bg-brand-600 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2"
           >
-            <Zap className="w-4 h-4 text-amber-400" />
-            <span>Launch Distraction-Free Focus Mode</span>
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>Open Focus Station</span>
           </button>
         </div>
       </div>
