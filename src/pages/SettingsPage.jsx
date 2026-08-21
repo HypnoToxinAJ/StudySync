@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
 import {
-  Settings,
-  Shield,
-  Download,
-  Upload,
-  RotateCcw,
+  User,
   Moon,
   Sun,
-  DollarSign,
-  GraduationCap,
-  CheckCircle2,
-  User
+  Download,
+  RotateCcw,
+  Sparkles,
+  Shield,
+  Layers,
+  LayoutGrid
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -18,26 +16,30 @@ import { useData } from '../context/DataContext';
 import { storageService } from '../services/storageService';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { AvatarPicker } from '../components/profile/AvatarPicker';
+import { ResetSemesterCard } from '../features/settings/components/ResetSemesterCard';
+import { SidebarSectionsSettings } from '../features/settings/components/SidebarSectionsSettings';
 
 export const SettingsPage = () => {
-  const { user, setUser } = useAuth();
+  const { user } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { refreshData } = useData();
 
   const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
-  const [currency, setCurrency] = useState(user?.currency || 'BDT');
 
   const handleExportData = () => {
     const data = {
       user: storageService.get(storageService.KEYS.USER),
       courses: storageService.get(storageService.KEYS.COURSES),
       routines: storageService.get(storageService.KEYS.ROUTINES),
+      archivedRoutineEvents: storageService.get(storageService.KEYS.ARCHIVED_ROUTINE_EVENTS),
       assessments: storageService.get(storageService.KEYS.ASSESSMENTS),
       semesters: storageService.get(storageService.KEYS.SEMESTERS),
       tuitions: storageService.get(storageService.KEYS.TUITIONS),
       expenses: storageService.get(storageService.KEYS.EXPENSES),
       shortcuts: storageService.get(storageService.KEYS.SHORTCUTS),
       tasks: storageService.get(storageService.KEYS.TASKS),
+      notes: storageService.get(storageService.KEYS.NOTES),
+      sidebarPreferences: storageService.get(storageService.KEYS.SIDEBAR_PREFERENCES),
       exportDate: new Date().toISOString()
     };
 
@@ -57,21 +59,22 @@ export const SettingsPage = () => {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-8 animate-fadeIn">
+      {/* Page Title */}
       <div>
         <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center space-x-2">
           <User className="w-6 h-6 text-brand-500" />
           <span>Profile & Settings</span>
         </h2>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Manage your student avatar persona, theme appearance, currency, and data backups
+          Manage your student avatar persona, theme appearance, navigation layout, semester reset, and data backups
         </p>
       </div>
 
-      {/* AVATAR SELECTION SECTION */}
+      {/* 1. AVATAR SELECTION SECTION */}
       <AvatarPicker />
 
-      {/* THEME & VISUAL PREFERENCES */}
+      {/* 2. THEME & VISUAL PREFERENCES */}
       <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">
         <h3 className="text-base font-bold text-slate-900 dark:text-white">Theme & Appearance</h3>
         <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl">
@@ -82,7 +85,7 @@ export const SettingsPage = () => {
 
           <button
             onClick={toggleTheme}
-            className="flex items-center space-x-2 px-4 py-2 bg-brand-600 text-white text-xs font-bold rounded-xl shadow-md"
+            className="flex items-center space-x-2 px-4 py-2 bg-brand-600 text-white text-xs font-bold rounded-xl shadow-md transition-all hover:bg-brand-700"
           >
             {theme === 'dark' ? <Sun className="w-4 h-4 text-amber-300" /> : <Moon className="w-4 h-4" />}
             <span>Switch to {theme === 'dark' ? 'Light' : 'Dark'} Mode</span>
@@ -90,35 +93,16 @@ export const SettingsPage = () => {
         </div>
       </div>
 
-      {/* CURRENCY & LOCALIZATION */}
-      <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">
-        <h3 className="text-base font-bold text-slate-900 dark:text-white">Currency & Regional Settings</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Preferred Currency</label>
-            <select
-              value={currency}
-              onChange={(e) => {
-                setCurrency(e.target.value);
-                const updated = { ...user, currency: e.target.value };
-                storageService.set(storageService.KEYS.USER, updated);
-                if (setUser) setUser(updated);
-              }}
-              className="w-full px-3 py-2 text-xs font-bold bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
-            >
-              <option value="BDT">BDT (৳ Bangladeshi Taka)</option>
-              <option value="USD">USD ($ US Dollar)</option>
-              <option value="EUR">EUR (€ Euro)</option>
-              <option value="INR">INR (₹ Indian Rupee)</option>
-            </select>
-          </div>
-        </div>
-      </div>
+      {/* 3. SIDEBAR SECTIONS CUSTOMIZATION */}
+      <SidebarSectionsSettings />
 
-      {/* DATA BACKUP & RESTORE */}
+      {/* 4. ACADEMIC SEMESTER RESET */}
+      <ResetSemesterCard />
+
+      {/* 5. DATA BACKUP & FULL WORKSPACE RESET */}
       <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">
         <h3 className="text-base font-bold text-slate-900 dark:text-white">Data Portability & Workspace Reset</h3>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-500 dark:text-slate-400">
           Export all your routines, courses, attendance history, CGPA records, and tuition logs as a single JSON file.
         </p>
 
@@ -151,3 +135,5 @@ export const SettingsPage = () => {
     </div>
   );
 };
+
+export default SettingsPage;

@@ -30,12 +30,14 @@ const ASSESSMENT_COLORS = {
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
 
 export const RoutinePage = () => {
-  const { routines, addRoutine, updateRoutine, deleteRoutine, assessments } = useData();
+  const { routines, addRoutine, updateRoutine, deleteRoutine, assessments, archivedRoutineEvents } = useData();
 
   const [activeTab, setActiveTab] = useState('weekly');
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingRoutine, setEditingRoutine] = useState(null);
   const [conflictWarning, setConflictWarning] = useState(null);
+  const [showArchivedHistory, setShowArchivedHistory] = useState(true);
+  const [selectedArchivedEvent, setSelectedArchivedEvent] = useState(null);
 
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
@@ -85,6 +87,7 @@ export const RoutinePage = () => {
   const fullCalendarEvents = useMemo(() => {
     const events = [];
 
+    // 1. Active weekly recurring routine classes
     routines.forEach(r => {
       events.push({
         id: r.id,
@@ -98,6 +101,22 @@ export const RoutinePage = () => {
       });
     });
 
+    // 2. Archived historical routine occurrences (read-only calendar preservation)
+    if (showArchivedHistory && Array.isArray(archivedRoutineEvents)) {
+      archivedRoutineEvents.forEach(arch => {
+        events.push({
+          id: arch.id,
+          title: `[Archived] ${arch.courseId} · ${arch.classType}`,
+          start: `${arch.date}T${arch.startTime || '08:00'}:00`,
+          end: `${arch.date}T${arch.endTime || '09:00'}:00`,
+          backgroundColor: '#64748B',
+          borderColor: '#475569',
+          extendedProps: { ...arch, eventType: 'archived-routine' }
+        });
+      });
+    }
+
+    // 3. Tests & Assessments
     assessments.forEach(ast => {
       const colors = ASSESSMENT_COLORS[ast.type] || ASSESSMENT_COLORS.CT;
       events.push({
@@ -112,7 +131,7 @@ export const RoutinePage = () => {
     });
 
     return events;
-  }, [routines, assessments, days]);
+  }, [routines, assessments, archivedRoutineEvents, showArchivedHistory, days]);
 
   const handleOpenAdd = () => {
     setEditingRoutine(null);
@@ -251,16 +270,14 @@ export const RoutinePage = () => {
             return (
               <div
                 key={day}
-                className={`p-4 rounded-2xl border transition-all ${
-                  isToday
+                className={`p-4 rounded-2xl border transition-all ${isToday
                     ? 'bg-brand-500/5 border-brand-500/40 ring-2 ring-brand-500/20'
                     : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800'
-                }`}
+                  }`}
               >
                 <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-3">
-                  <span className={`text-xs font-extrabold uppercase tracking-wider ${
-                    isToday ? 'text-brand-600 dark:text-brand-400' : 'text-slate-700 dark:text-slate-300'
-                  }`}>
+                  <span className={`text-xs font-extrabold uppercase tracking-wider ${isToday ? 'text-brand-600 dark:text-brand-400' : 'text-slate-700 dark:text-slate-300'
+                    }`}>
                     {day}
                   </span>
                   {isToday && <Badge variant="indigo" size="sm">Today</Badge>}
@@ -330,18 +347,37 @@ export const RoutinePage = () => {
 
       {activeTab === 'monthly' && (
         <div className="space-y-4">
-          <div className="flex flex-wrap gap-3 p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800">
-            <span className="text-xs font-bold text-slate-500 dark:text-slate-400 w-full sm:w-auto">Legend:</span>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-full bg-indigo-500" />
-              <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Classes</span>
-            </div>
-            {Object.entries(ASSESSMENT_COLORS).map(([key, val]) => (
-              <div key={key} className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-full" style={{ backgroundColor: val.bg }} />
-                <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">{val.label}</span>
+          <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/80 dark:border-slate-800">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Legend:</span>
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-indigo-500" />
+                <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Active Classes</span>
               </div>
-            ))}
+              <div className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-full bg-slate-500" />
+                <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">Archived Routine History</span>
+              </div>
+              {Object.entries(ASSESSMENT_COLORS).map(([key, val]) => (
+                <div key={key} className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: val.bg }} />
+                  <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">{val.label}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Archived Routine Filter Toggle */}
+            {archivedRoutineEvents?.length > 0 && (
+              <label className="flex items-center space-x-2 text-xs font-bold text-slate-600 dark:text-slate-300 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={showArchivedHistory}
+                  onChange={(e) => setShowArchivedHistory(e.target.checked)}
+                  className="rounded border-slate-300 text-brand-600 focus:ring-brand-500"
+                />
+                <span>Show Archived History ({archivedRoutineEvents.length})</span>
+              </label>
+            )}
           </div>
 
           <div className="p-3 sm:p-6 bg-white dark:bg-slate-900 rounded-3xl border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-x-auto">
@@ -372,6 +408,12 @@ export const RoutinePage = () => {
                 slotMaxTime="22:00:00"
                 allDaySlot={false}
                 nowIndicator={true}
+                eventClick={(info) => {
+                  const props = info.event.extendedProps;
+                  if (props?.eventType === 'archived-routine') {
+                    setSelectedArchivedEvent(props);
+                  }
+                }}
                 eventDidMount={(info) => {
                   info.el.title = info.event.title;
                 }}
@@ -426,9 +468,8 @@ export const RoutinePage = () => {
                   key={color}
                   type="button"
                   onClick={() => handleColorSelect(color)}
-                  className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 ${
-                    form.color === color ? 'border-slate-900 dark:border-white ring-2 ring-offset-2 ring-brand-500' : 'border-transparent'
-                  }`}
+                  className={`w-8 h-8 rounded-full border-2 transition-all hover:scale-110 ${form.color === color ? 'border-slate-900 dark:border-white ring-2 ring-offset-2 ring-brand-500' : 'border-transparent'
+                    }`}
                   style={{ backgroundColor: color }}
                   title={color}
                 />
@@ -539,6 +580,66 @@ export const RoutinePage = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Archived Routine Event Details Modal */}
+      <Modal
+        isOpen={Boolean(selectedArchivedEvent)}
+        onClose={() => setSelectedArchivedEvent(null)}
+        title="Archived Routine Entry"
+      >
+        {selectedArchivedEvent && (
+          <div className="space-y-4 text-xs">
+            <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="px-2.5 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-extrabold text-[10px]">
+                  Read-Only Calendar History
+                </span>
+                <span className="text-[10px] text-slate-400 font-semibold">
+                  Semester: {selectedArchivedEvent.semesterId}
+                </span>
+              </div>
+
+              <div>
+                <h4 className="text-sm font-black text-slate-900 dark:text-white">
+                  {selectedArchivedEvent.courseId} · {selectedArchivedEvent.courseTitle}
+                </h4>
+                <p className="text-slate-500 dark:text-slate-400 mt-0.5">
+                  {selectedArchivedEvent.classType?.toUpperCase()} {selectedArchivedEvent.faculty ? `• Faculty: ${selectedArchivedEvent.faculty}` : ''}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Date & Time</span>
+                  <p className="font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                    {selectedArchivedEvent.date} ({selectedArchivedEvent.startTime} - {selectedArchivedEvent.endTime})
+                  </p>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Location</span>
+                  <p className="font-bold text-slate-800 dark:text-slate-200 mt-0.5">
+                    {selectedArchivedEvent.room || 'N/A'}, {selectedArchivedEvent.building || ''}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-[11px] text-slate-400 italic text-center">
+              This is a preserved historical routine occurrence from a previous semester and cannot be modified.
+            </p>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedArchivedEvent(null)}
+                className="px-4 py-2 bg-slate-900 dark:bg-slate-800 text-white rounded-xl font-bold text-xs shadow-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

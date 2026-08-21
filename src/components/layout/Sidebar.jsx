@@ -17,28 +17,18 @@ import {
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
 import { UserAvatar } from '../common/UserAvatar';
+import { navigationSelectors } from '../../store/selectors/navigationSelectors';
 
 export const Sidebar = ({ isCollapsed, onToggle }) => {
   const { user, logout } = useAuth();
-  const { activeAlerts } = useData();
+  const { activeAlerts, sidebarPreferences } = useData();
 
-  const navItems = [
-    { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { label: 'Class Routine', path: '/routine', icon: CalendarDays },
-    { label: 'Attendance & CT Marks', path: '/attendance', icon: CheckSquare },
-    { label: 'Tests & Assignments', path: '/assessments', icon: FileCheck2 },
-    { label: 'CGPA Calculator', path: '/cgpa', icon: GraduationCap },
-    { label: 'Math Tools', path: '/math-tools', icon: Calculator },
-    { label: 'Tuition Tracker', path: '/tuition', icon: Banknote },
-    { label: 'Expense Tracker', path: '/expenses', icon: Wallet },
-    { label: 'Focus Mode', path: '/focus', icon: Zap },
-  ];
+  const navItems = navigationSelectors.getVisibleNavigationSections(sidebarPreferences);
 
   return (
     <aside
-      className={`relative hidden lg:flex flex-col border-r border-slate-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/90 backdrop-blur-xl transition-all duration-300 z-30 ${
-        isCollapsed ? 'w-20' : 'w-64'
-      }`}
+      className={`relative hidden lg:flex flex-col border-r border-slate-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/90 backdrop-blur-xl transition-all duration-300 z-30 ${isCollapsed ? 'w-20' : 'w-64'
+        }`}
     >
       {/* Brand Logo */}
       <div className="flex items-center justify-between h-16 px-5 border-b border-slate-100 dark:border-slate-800">
@@ -76,10 +66,9 @@ export const Sidebar = ({ isCollapsed, onToggle }) => {
               key={item.path}
               to={item.path}
               className={({ isActive }) =>
-                `flex items-center space-x-3 px-3.5 py-2.5 rounded-xl font-semibold text-sm transition-all group relative ${
-                  isActive
-                    ? 'bg-brand-600 text-white shadow-md shadow-brand-600/30'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-slate-900 dark:hover:text-white'
+                `flex items-center space-x-3 px-3.5 py-2.5 rounded-xl font-semibold text-sm transition-all group relative ${isActive
+                  ? 'bg-brand-600 text-white shadow-md shadow-brand-600/30'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/80 hover:text-slate-900 dark:hover:text-white'
                 }`
               }
             >
@@ -88,9 +77,8 @@ export const Sidebar = ({ isCollapsed, onToggle }) => {
 
               {/* Alert Badge for Dashboard */}
               {item.path === '/' && activeAlerts.length > 0 && (
-                <span className={`ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full ${
-                  isCollapsed ? 'absolute top-1 right-1' : ''
-                } bg-rose-500 text-white shadow-sm`}>
+                <span className={`ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full ${isCollapsed ? 'absolute top-1 right-1' : ''
+                  } bg-rose-500 text-white shadow-sm`}>
                   {activeAlerts.length}
                 </span>
               )}

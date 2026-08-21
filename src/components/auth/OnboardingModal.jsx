@@ -32,7 +32,7 @@ export const OnboardingModal = ({ isOpen, onClose }) => {
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={() => {}} title="Welcome to StudySync! Let's Personalize Your Academic Workspace" maxWidth="max-w-2xl">
+    <Modal isOpen={isOpen} onClose={() => { }} title="Welcome to StudySync! Let's Personalize Your Academic Workspace" maxWidth="max-w-2xl">
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="p-4 bg-brand-500/10 rounded-2xl border border-brand-500/20 text-xs text-brand-700 dark:text-brand-300 flex items-center space-x-3">
           <GraduationCap className="w-6 h-6 text-brand-500 shrink-0" />
@@ -87,7 +87,7 @@ export const OnboardingModal = ({ isOpen, onClose }) => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Current Semester</label>
             <input
@@ -97,19 +97,6 @@ export const OnboardingModal = ({ isOpen, onClose }) => {
               className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none"
               required
             />
-          </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Preferred Currency</label>
-            <select
-              value={form.currency}
-              onChange={(e) => setForm({ ...form, currency: e.target.value })}
-              className="w-full px-3.5 py-2.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-semibold"
-            >
-              <option value="BDT">BDT (৳ Bangladeshi Taka)</option>
-              <option value="USD">USD ($ US Dollar)</option>
-              <option value="EUR">EUR (€ Euro)</option>
-              <option value="INR">INR (₹ Indian Rupee)</option>
-            </select>
           </div>
         </div>
 
@@ -124,11 +111,10 @@ export const OnboardingModal = ({ isOpen, onClose }) => {
                   type="button"
                   key={day}
                   onClick={() => toggleDay(day)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                    isSelected
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${isSelected
                       ? 'bg-brand-600 text-white shadow-md'
                       : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200'
-                  }`}
+                    }`}
                 >
                   {day}
                 </button>

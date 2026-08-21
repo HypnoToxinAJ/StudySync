@@ -5,6 +5,7 @@ import { TopNavbar } from './TopNavbar';
 import { MobileNav } from './MobileNav';
 import { Breadcrumbs } from './Breadcrumbs';
 import { QuickAddModal } from './QuickAddModal';
+import { HiddenSectionBanner } from '../common/HiddenSectionBanner';
 
 export const AppShell = () => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -30,6 +31,7 @@ export const AppShell = () => {
         {/* Page Content Container */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
           <Breadcrumbs />
+          <HiddenSectionBanner />
           <Outlet />
         </main>
       </div>

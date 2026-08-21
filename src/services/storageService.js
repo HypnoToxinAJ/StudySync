@@ -12,6 +12,7 @@ import {
   initialTasks,
   initialFocusData
 } from '../data/mockData';
+import { storageMigrations } from '../utils/storageMigrations';
 
 const KEYS = {
   USER: 'studysync_user',
@@ -32,7 +33,9 @@ const KEYS = {
   CUET_RESULTS: 'studysync_cuet_results',
   REMEMBERED_STUDENT_ID: 'studysync_remembered_student_id',
   MANUAL_SEMESTERS_ARCHIVE: 'studysync_manual_semesters_archive',
-  STORAGE_VERSION: 'studysync_storage_v2'
+  ARCHIVED_ROUTINE_EVENTS: 'studysync_archived_routine_events',
+  SIDEBAR_PREFERENCES: 'studysync_sidebar_preferences',
+  STORAGE_VERSION: 'studysync_storage_v2_1'
 };
 
 export const storageService = {
@@ -159,8 +162,9 @@ export const storageService = {
       ]
     });
 
-    // Run safe data migration for courses
+    // Run safe data migration for courses & storage schema
     storageService.migrateCourseData();
+    storageMigrations.runMigrations();
   },
 
   // Reset to default mock data
