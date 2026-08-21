@@ -20,6 +20,7 @@ import { Modal } from '../components/common/Modal';
 import { Badge } from '../components/common/Badge';
 import { Tabs } from '../components/common/Tabs';
 import { routineService, COURSE_COLOR_PRESETS } from '../services/routineService';
+import { combineLocalDateTime } from '../utils/assessmentUtils';
 
 const ASSESSMENT_COLORS = {
   CT: { bg: '#F59E0B', border: '#D97706', label: 'Class Test' },
@@ -70,7 +71,9 @@ export const RoutinePage = () => {
     endOfWeek.setHours(23, 59, 59, 999);
 
     assessments.forEach(ast => {
-      const date = new Date(ast.date + 'T12:00:00');
+      const assessmentDate = ast.type === 'assignment' ? ast.deadlineDate : ast.date;
+      if (!assessmentDate) return;
+      const date = new Date(assessmentDate + 'T12:00:00');
       if (date >= startOfWeek && date <= endOfWeek) {
         const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
         if (map[dayName]) {
@@ -79,7 +82,11 @@ export const RoutinePage = () => {
       }
     });
     Object.keys(map).forEach(d => {
-      map[d].sort((a, b) => (a.startTime || '00:00').localeCompare(b.startTime || '00:00'));
+      map[d].sort((a, b) => {
+        const aTime = a.type === 'assignment' ? a.deadlineTime : a.startTime;
+        const bTime = b.type === 'assignment' ? b.deadlineTime : b.startTime;
+        return (aTime || '00:00').localeCompare(bTime || '00:00');
+      });
     });
     return map;
   }, [assessments]);
@@ -119,11 +126,17 @@ export const RoutinePage = () => {
     // 3. Tests & Assessments
     assessments.forEach(ast => {
       const colors = ASSESSMENT_COLORS[ast.type] || ASSESSMENT_COLORS.CT;
+      const isAssignment = ast.type === 'assignment';
+      const start = isAssignment
+        ? (ast.deadlineAt || combineLocalDateTime(ast.deadlineDate, ast.deadlineTime))
+        : (ast.startAt || combineLocalDateTime(ast.date, ast.startTime));
+      if (!start) return;
+      const end = isAssignment ? undefined : (ast.endAt || combineLocalDateTime(ast.date, ast.endTime) || undefined);
       events.push({
         id: ast.id,
         title: `${colors.label}: ${ast.courseId}`,
-        start: `${ast.date}T${ast.startTime || '10:00:00'}`,
-        end: `${ast.date}T${ast.endTime || '11:00:00'}`,
+        start,
+        end,
         backgroundColor: colors.bg,
         borderColor: colors.border,
         extendedProps: { ...ast, eventType: 'assessment' }
@@ -221,7 +234,8 @@ export const RoutinePage = () => {
         <p className="text-[10px] text-slate-600 dark:text-slate-400 truncate">{ast.title}</p>
         <p className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
           <Clock className="w-3 h-3" />
-          {ast.date} {ast.startTime && `· ${ast.startTime}`}
+          {ast.type === 'assignment' ? ast.deadlineDate : ast.date}{' '}
+          {(ast.type === 'assignment' ? ast.deadlineTime : ast.startTime) && `· ${ast.type === 'assignment' ? ast.deadlineTime : ast.startTime}`}
         </p>
       </div>
     );

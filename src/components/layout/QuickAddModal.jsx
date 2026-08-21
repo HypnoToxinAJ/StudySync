@@ -2,14 +2,17 @@ import React, { useState } from 'react';
 import { Modal } from '../common/Modal';
 import { useData } from '../../context/DataContext';
 import { Calendar, FileCheck2, BookOpen, Banknote, Wallet, Link } from 'lucide-react';
+import { combineLocalDateTime } from '../../utils/assessmentUtils';
+import { RelatedLinksManager } from '../assessments/RelatedLinksManager';
 
 export const QuickAddModal = ({ isOpen, onClose }) => {
-  const { addRoutine, addAssessment, addCourse, addTuitionStudent, addTransaction, addShortcut } = useData();
+  const { addRoutine, addAssessment, addCourse, addTuitionStudent, addTransaction, addShortcut, courses } = useData();
   const [activeType, setActiveType] = useState('routine');
 
   // Form states
   const [routineForm, setRoutineForm] = useState({ courseId: 'CSE-311', courseTitle: 'Database Systems', dayOfWeek: 'Sunday', startTime: '09:40', endTime: '10:30', room: 'Room 304', classType: 'lecture' });
-  const [astForm, setAstForm] = useState({ title: '', courseId: 'CSE-311', type: 'CT', date: new Date().toISOString().split('T')[0], marks: 20, syllabus: '' });
+  const [astForm, setAstForm] = useState({ title: '', courseId: 'CSE-311', courseTitle: 'Database Management Systems', type: 'CT', date: new Date().toISOString().split('T')[0], startTime: '10:00', endTime: '11:00', deadlineDate: new Date().toISOString().split('T')[0], deadlineTime: '23:59', marks: 20, syllabus: '', details: '', priority: 'medium', reminderTime: '24h', notes: '', attachments: [], links: [] });
+  const [astError, setAstError] = useState('');
   const [txForm, setTxForm] = useState({ title: '', amount: '', type: 'expense', category: 'Food & Mess', accountId: 'acc-1' });
 
   const handleSubmit = (e) => {
@@ -18,7 +21,24 @@ export const QuickAddModal = ({ isOpen, onClose }) => {
       addRoutine(routineForm);
     } else if (activeType === 'assessment') {
       if (!astForm.title) return;
-      addAssessment(astForm);
+      if (astForm.type !== 'assignment' && (!astForm.date || !astForm.startTime || !astForm.endTime || astForm.endTime <= astForm.startTime)) {
+        setAstError('Enter a valid date and an end time later than the start time.');
+        return;
+      }
+      if (astForm.type === 'assignment' && (!astForm.deadlineDate || !astForm.deadlineTime)) {
+        setAstError('Enter both the submission deadline date and time.');
+        return;
+      }
+      if (astForm.type === 'assignment' ? !astForm.details.trim() : !astForm.syllabus.trim()) {
+        setAstError(astForm.type === 'assignment' ? 'Enter assignment details.' : 'Enter the syllabus or coverage.');
+        return;
+      }
+      const common = { title: astForm.title.trim(), courseId: astForm.courseId, courseTitle: astForm.courseTitle, type: astForm.type, marks: astForm.marks, priority: astForm.priority, reminderTime: astForm.reminderTime, notes: astForm.notes.trim(), attachments: [], links: astForm.links };
+      const payload = astForm.type === 'assignment'
+        ? { ...common, details: astForm.details, deadlineDate: astForm.deadlineDate, deadlineTime: astForm.deadlineTime, deadlineAt: combineLocalDateTime(astForm.deadlineDate, astForm.deadlineTime) }
+        : { ...common, syllabus: astForm.syllabus, date: astForm.date, startTime: astForm.startTime, endTime: astForm.endTime, startAt: combineLocalDateTime(astForm.date, astForm.startTime), endAt: combineLocalDateTime(astForm.date, astForm.endTime) };
+      addAssessment(payload);
+      setAstError('');
     } else if (activeType === 'expense') {
       if (!txForm.title || !txForm.amount) return;
       addTransaction(txForm);
@@ -133,6 +153,19 @@ export const QuickAddModal = ({ isOpen, onClose }) => {
                   required
                 />
               </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Course ID and title</label>
+                <select
+                  value={astForm.courseId}
+                  onChange={(e) => {
+                    const course = courses.find(item => item.courseId === e.target.value);
+                    setAstForm({ ...astForm, courseId: e.target.value, courseTitle: course?.courseTitle || '' });
+                  }}
+                  className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
+                >
+                  {courses.map(course => <option key={course.id} value={course.courseId}>{course.courseId} · {course.courseTitle}</option>)}
+                </select>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Type</label>
@@ -146,16 +179,27 @@ export const QuickAddModal = ({ isOpen, onClose }) => {
                     <option value="examination">Exam</option>
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={astForm.date}
-                    onChange={(e) => setAstForm({ ...astForm, date: e.target.value })}
-                    className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
-                  />
-                </div>
+                <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Marks</label><input type="number" min="0" value={astForm.marks} onChange={(e) => setAstForm({ ...astForm, marks: Number(e.target.value) })} className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" /></div>
               </div>
+              {astForm.type === 'assignment' ? (
+                <><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Submission deadline date</label><input type="date" value={astForm.deadlineDate} onChange={(e) => setAstForm({ ...astForm, deadlineDate: e.target.value })} className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" required /></div>
+                  <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Submission deadline time</label><input type="time" value={astForm.deadlineTime} onChange={(e) => setAstForm({ ...astForm, deadlineTime: e.target.value })} className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" required /></div>
+                </div><div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Assignment details</label><textarea rows={2} value={astForm.details} onChange={(e) => setAstForm({ ...astForm, details: e.target.value })} className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" required /></div></>
+              ) : (
+                <><div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Date</label><input type="date" value={astForm.date} onChange={(e) => setAstForm({ ...astForm, date: e.target.value })} className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" required /></div>
+                  <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Start time</label><input type="time" value={astForm.startTime} onChange={(e) => setAstForm({ ...astForm, startTime: e.target.value })} className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" required /></div>
+                  <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">End time</label><input type="time" value={astForm.endTime} onChange={(e) => setAstForm({ ...astForm, endTime: e.target.value })} className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" required /></div>
+                </div><div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Syllabus or coverage</label><textarea rows={2} value={astForm.syllabus} onChange={(e) => setAstForm({ ...astForm, syllabus: e.target.value })} className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" required /></div></>
+              )}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Priority</label><select value={astForm.priority} onChange={(e) => setAstForm({ ...astForm, priority: e.target.value })} className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
+                <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Reminder time</label><select value={astForm.reminderTime} onChange={(e) => setAstForm({ ...astForm, reminderTime: e.target.value })} className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"><option value="12h">12 hours before</option><option value="24h">24 hours before</option><option value="48h">48 hours before</option></select></div>
+              </div>
+              <div><label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Notes</label><textarea rows={2} value={astForm.notes} onChange={(e) => setAstForm({ ...astForm, notes: e.target.value })} className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl" /></div>
+              <RelatedLinksManager links={astForm.links} onChange={(links) => setAstForm({ ...astForm, links })} />
+              {astError && <p role="alert" className="text-xs text-rose-600 dark:text-rose-400">{astError}</p>}
             </>
           )}
 

@@ -1,6 +1,7 @@
 import { storageService } from './storageService';
 import { attendanceService } from './attendanceService';
 import { expenseService } from './expenseService';
+import { getAssessmentDateTime } from '../utils/assessmentUtils';
 
 const TUITION_KEYWORDS = [
   'tuition',
@@ -72,10 +73,12 @@ export const alertService = {
 
     // 1. Assessment / CT / Assignment / Exam alerts
     const assessments = storageService.get(storageService.KEYS.ASSESSMENTS, []);
-    const today = new Date().toISOString().split('T')[0];
+    const now = new Date();
 
     assessments.forEach(ast => {
-      if (ast.date >= today) {
+      const scheduledAt = getAssessmentDateTime(ast);
+      const scheduledDate = scheduledAt ? new Date(scheduledAt) : null;
+      if (scheduledDate && !Number.isNaN(scheduledDate.getTime()) && scheduledDate >= now) {
         const id = `alert-ast-${ast.id}`;
         let priority = ast.priority || 'medium';
         let category = 'Academic';
@@ -87,13 +90,15 @@ export const alertService = {
           module: 'assessments',
           title: ast.title || `${ast.type?.toUpperCase()} - ${ast.courseId}`,
           course: ast.courseId,
-          date: `${ast.date} ${ast.startTime || ''}`,
-          remainingTime: `${ast.date === today ? 'Today' : 'Upcoming'}`,
+          date: scheduledDate.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }),
+          remainingTime: scheduledDate.toDateString() === now.toDateString() ? 'Today' : 'Upcoming',
           type: ast.type || 'Assessment',
           priority,
           category,
           actionPath,
-          message: `Syllabus: ${ast.syllabus || 'Review lecture notes'}`,
+          message: ast.type === 'assignment'
+            ? `Submission deadline · Reminder ${ast.reminderTime || 'not set'}`
+            : `Syllabus: ${ast.syllabus || 'Review lecture notes'} · Reminder ${ast.reminderTime || 'not set'}`,
           dismissible: true
         });
       }

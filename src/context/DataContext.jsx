@@ -161,11 +161,42 @@ export const DataProvider = ({ children }) => {
   };
 
   // --- Assessment / Test & Assignment Handlers ---
+  const syncAssessmentTask = (assessment) => {
+    const taskId = `task-assessment-${assessment.id}`;
+    const tasksList = storageService.get(storageService.KEYS.TASKS, []);
+    const existingIndex = tasksList.findIndex(task => task.id === taskId);
+
+    if (assessment.type !== 'assignment' || !assessment.deadlineAt) {
+      if (existingIndex !== -1) {
+        tasksList.splice(existingIndex, 1);
+        storageService.set(storageService.KEYS.TASKS, tasksList);
+      }
+      return;
+    }
+
+    const generatedTask = {
+      id: taskId,
+      assessmentId: assessment.id,
+      generatedBy: 'assessment',
+      title: `Submit ${assessment.title || assessment.courseId || 'assignment'}`,
+      dueDate: assessment.deadlineDate,
+      dueAt: assessment.deadlineAt,
+      priority: assessment.priority || 'medium',
+      category: 'academic',
+      courseId: assessment.courseId,
+      completed: existingIndex === -1 ? false : tasksList[existingIndex].completed
+    };
+    if (existingIndex === -1) tasksList.unshift(generatedTask);
+    else tasksList[existingIndex] = { ...tasksList[existingIndex], ...generatedTask };
+    storageService.set(storageService.KEYS.TASKS, tasksList);
+  };
+
   const addAssessment = (assessmentData) => {
     const list = storageService.get(storageService.KEYS.ASSESSMENTS, []);
     const newAst = { id: `ev-${Date.now()}`, ...assessmentData };
     list.push(newAst);
     storageService.set(storageService.KEYS.ASSESSMENTS, list);
+    syncAssessmentTask(newAst);
 
     // Also sync to course if courseId matches
     if (assessmentData.courseId) {
@@ -182,6 +213,7 @@ export const DataProvider = ({ children }) => {
     if (idx !== -1) {
       list[idx] = { ...list[idx], ...updatedData };
       storageService.set(storageService.KEYS.ASSESSMENTS, list);
+      syncAssessmentTask(list[idx]);
     }
     refreshData();
     showToast('Assessment updated!');
@@ -191,6 +223,8 @@ export const DataProvider = ({ children }) => {
     const list = storageService.get(storageService.KEYS.ASSESSMENTS, []);
     const filtered = list.filter(a => a.id !== id);
     storageService.set(storageService.KEYS.ASSESSMENTS, filtered);
+    const tasksList = storageService.get(storageService.KEYS.TASKS, []);
+    storageService.set(storageService.KEYS.TASKS, tasksList.filter(task => task.id !== `task-assessment-${id}`));
     refreshData();
     showToast('Assessment deleted.');
   };

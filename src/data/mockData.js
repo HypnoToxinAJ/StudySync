@@ -218,14 +218,16 @@ export const initialAssessments = [
   {
     id: "ev-1",
     courseId: "CSE-311",
+    courseTitle: "Database Management Systems",
     title: "Class Test 4: B-Trees & Transaction Management",
     type: "CT",
     date: "2026-07-28",
     startTime: "10:00",
     endTime: "10:45",
+    startAt: "2026-07-28T10:00:00",
+    endAt: "2026-07-28T10:45:00",
     syllabus: "Chapter 14 & 15: Indexing structures, B+ Trees, ACID properties & Concurrency Control",
     marks: 20,
-    room: "Room 304",
     priority: "high",
     reminderTime: "24h",
     notes: "Revise serializability algorithms and locking protocols.",
@@ -234,19 +236,20 @@ export const initialAssessments = [
       { id: "att-2", name: "Transaction-Concurrency.docx", size: "1.1 MB", type: "application/docx" }
     ],
     links: [
-      { id: "lnk-1", label: "GeeksforGeeks B+ Tree Tutorial", url: "https://www.geeksforgeeks.org/b-tree-set-1-insert/" },
-      { id: "lnk-2", label: "Database System Concepts Book Code", url: "https://db-book.com/" }
+      { id: "lnk-1", label: "GeeksforGeeks B+ Tree Tutorial", url: "https://www.geeksforgeeks.org/b-tree-set-1-insert/", type: "Reference", createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z" },
+      { id: "lnk-2", label: "Database System Concepts Book Code", url: "https://db-book.com/", type: "Study material", createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z" }
     ]
   },
   {
     id: "ev-2",
     courseId: "CSE-313",
+    courseTitle: "Computer Networks",
     title: "Assignment 2: Socket Programming in Python",
     type: "assignment",
-    date: "2026-07-30",
-    startTime: "23:59",
-    endTime: "23:59",
-    syllabus: "Implement Multi-threaded TCP Chat Server & Client with GUI",
+    deadlineDate: "2026-07-30",
+    deadlineTime: "23:59",
+    deadlineAt: "2026-07-30T23:59:00",
+    details: "Implement Multi-threaded TCP Chat Server & Client with GUI",
     marks: 20,
     submissionMethod: "GitHub Repository URL & Google Classroom",
     priority: "high",
@@ -256,20 +259,22 @@ export const initialAssessments = [
       { id: "att-3", name: "Socket_Assignment_Spec.pdf", size: "850 KB", type: "application/pdf" }
     ],
     links: [
-      { id: "lnk-3", label: "Python Socket Docs", url: "https://docs.python.org/3/library/socket.html" }
+      { id: "lnk-3", label: "Python Socket Docs", url: "https://docs.python.org/3/library/socket.html", type: "Reference", createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z" }
     ]
   },
   {
     id: "ev-3",
     courseId: "MATH-301",
+    courseTitle: "Complex Variables and Statistics",
     title: "Class Test 3: Complex Residues & Contour Integration",
     type: "CT",
     date: "2026-08-04",
     startTime: "11:20",
     endTime: "12:00",
+    startAt: "2026-08-04T11:20:00",
+    endAt: "2026-08-04T12:00:00",
     syllabus: "Laurent Series, Cauchy's Residue Theorem, Real Integration using Contour Method",
     marks: 20,
-    room: "Room 201",
     priority: "medium",
     reminderTime: "24h",
     notes: "Practice exercises 18.2 to 18.5 from Kreyszig.",
@@ -279,14 +284,16 @@ export const initialAssessments = [
   {
     id: "ev-4",
     courseId: "CSE-315",
+    courseTitle: "Operating Systems",
     title: "Semester Mid-Term Examination",
     type: "examination",
     date: "2026-08-12",
     startTime: "10:00",
     endTime: "12:00",
+    startAt: "2026-08-12T10:00:00",
+    endAt: "2026-08-12T12:00:00",
     syllabus: "Entire syllabus from Modules 1 to 4",
     marks: 50,
-    room: "Auditorium Hall A",
     priority: "high",
     reminderTime: "48h",
     notes: "Carry admit card and university ID card.",

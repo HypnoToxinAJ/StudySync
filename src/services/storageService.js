@@ -35,7 +35,7 @@ const KEYS = {
   MANUAL_SEMESTERS_ARCHIVE: 'studysync_manual_semesters_archive',
   ARCHIVED_ROUTINE_EVENTS: 'studysync_archived_routine_events',
   SIDEBAR_PREFERENCES: 'studysync_sidebar_preferences',
-  STORAGE_VERSION: 'studysync_storage_v2_1'
+  STORAGE_VERSION: 'studysync_storage_v2_2'
 };
 
 export const storageService = {
