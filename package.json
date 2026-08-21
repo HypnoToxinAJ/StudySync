@@ -24,6 +24,7 @@
     "framer-motion": "^11.11.0",
     "lucide-react": "^0.460.0",
     "pdfjs-dist": "^3.11.174",
+    "playwright-core": "^1.62.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.53.0",

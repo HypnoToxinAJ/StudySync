@@ -2,6 +2,11 @@ import { storageService } from './storageService';
 
 export const cgpaService = {
   getSemesters: () => {
+    // If official CUET results are imported, return normalized CUET semesters
+    const cuetResults = storageService.get(storageService.KEYS.CUET_RESULTS, null);
+    if (cuetResults && cuetResults.semesters && cuetResults.semesters.length > 0) {
+      return cuetResults.semesters;
+    }
     return storageService.get(storageService.KEYS.SEMESTERS, []);
   },
 
@@ -10,7 +15,7 @@ export const cgpaService = {
   },
 
   addSemester: (name) => {
-    const semesters = cgpaService.getSemesters();
+    const semesters = storageService.get(storageService.KEYS.SEMESTERS, []);
     const newSem = {
       id: `sem-${Date.now()}`,
       name: name || `Semester ${semesters.length + 1}`,
@@ -23,7 +28,7 @@ export const cgpaService = {
   },
 
   updateSemesterName: (id, name) => {
-    const semesters = cgpaService.getSemesters();
+    const semesters = storageService.get(storageService.KEYS.SEMESTERS, []);
     const index = semesters.findIndex(s => s.id === id);
     if (index !== -1) {
       semesters[index].name = name;
@@ -32,14 +37,14 @@ export const cgpaService = {
   },
 
   deleteSemester: (id) => {
-    const semesters = cgpaService.getSemesters();
+    const semesters = storageService.get(storageService.KEYS.SEMESTERS, []);
     const filtered = semesters.filter(s => s.id !== id);
     cgpaService.saveSemesters(filtered);
     return filtered;
   },
 
   addCourseToSemester: (semesterId, courseData) => {
-    const semesters = cgpaService.getSemesters();
+    const semesters = storageService.get(storageService.KEYS.SEMESTERS, []);
     const index = semesters.findIndex(s => s.id === semesterId);
     if (index !== -1) {
       const newCourse = {
@@ -54,7 +59,7 @@ export const cgpaService = {
   },
 
   updateCourseInSemester: (semesterId, courseId, updatedData) => {
-    const semesters = cgpaService.getSemesters();
+    const semesters = storageService.get(storageService.KEYS.SEMESTERS, []);
     const sIndex = semesters.findIndex(s => s.id === semesterId);
     if (sIndex !== -1) {
       const cIndex = semesters[sIndex].courses.findIndex(c => c.id === courseId);
@@ -66,7 +71,7 @@ export const cgpaService = {
   },
 
   deleteCourseFromSemester: (semesterId, courseId) => {
-    const semesters = cgpaService.getSemesters();
+    const semesters = storageService.get(storageService.KEYS.SEMESTERS, []);
     const sIndex = semesters.findIndex(s => s.id === semesterId);
     if (sIndex !== -1) {
       semesters[sIndex].courses = semesters[sIndex].courses.filter(c => c.id !== courseId);
@@ -83,8 +88,10 @@ export const cgpaService = {
     courses.forEach(c => {
       const credit = Number(c.credit || 0);
       const gp = Number(c.gradePoint || 0);
-      totalQualityPoints += credit * gp;
-      totalCredits += credit;
+      if (c.letterGrade !== 'F') {
+        totalQualityPoints += credit * gp;
+        totalCredits += credit;
+      }
     });
 
     const gpa = totalCredits > 0 ? (totalQualityPoints / totalCredits).toFixed(2) : "0.00";
@@ -97,7 +104,28 @@ export const cgpaService = {
 
   // Overall CGPA across all completed semesters
   calculateOverallCGPA: () => {
-    const semesters = cgpaService.getSemesters();
+    // Check if official CUET results are active
+    const cuetResults = storageService.get(storageService.KEYS.CUET_RESULTS, null);
+    if (cuetResults && cuetResults.overall && cuetResults.semesters) {
+      const trendData = cuetResults.semesters.map((sem, idx) => ({
+        name: sem.name.replace('Level ', 'L').replace(' - Term ', 'T'),
+        fullName: sem.name,
+        gpa: Number(sem.gpa || sem.calculatedGpa || 0),
+        credits: Number(sem.completedCredits || 0),
+        index: idx + 1
+      }));
+
+      return {
+        cgpa: Number(cuetResults.overall.cgpa || cuetResults.overall.calculatedCgpa || 0),
+        totalQualityPoints: Number(cuetResults.overall.qualityPoints || 0),
+        totalCredits: Number(cuetResults.overall.completedCredits || 0),
+        highestGPA: Number(cuetResults.overall.highestGpa || 0),
+        semesterCount: cuetResults.semesters.length,
+        trendData
+      };
+    }
+
+    const semesters = storageService.get(storageService.KEYS.SEMESTERS, []);
     let totalQualityPoints = 0;
     let totalCredits = 0;
     let highestGPA = 0;

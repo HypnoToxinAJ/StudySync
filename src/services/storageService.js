@@ -29,6 +29,9 @@ const KEYS = {
   FOCUS: 'studysync_focus',
   DISMISSED_ALERTS: 'studysync_dismissed_alerts',
   SETTINGS: 'studysync_settings',
+  CUET_RESULTS: 'studysync_cuet_results',
+  REMEMBERED_STUDENT_ID: 'studysync_remembered_student_id',
+  MANUAL_SEMESTERS_ARCHIVE: 'studysync_manual_semesters_archive',
   STORAGE_VERSION: 'studysync_storage_v2'
 };
 
