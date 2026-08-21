@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -16,6 +16,9 @@ import { TuitionPage } from './pages/TuitionPage';
 import { ExpensesPage } from './pages/ExpensesPage';
 import { FocusPage } from './pages/FocusPage';
 import { SettingsPage } from './pages/SettingsPage';
+
+// Lazy load MathToolsPage to optimize bundle
+const MathToolsPage = lazy(() => import('./pages/MathToolsPage'));
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -50,6 +53,22 @@ export const App = () => {
                   <Route path="tuition" element={<TuitionPage />} />
                   <Route path="expenses" element={<ExpensesPage />} />
                   <Route path="focus" element={<FocusPage />} />
+                  <Route
+                    path="math-tools"
+                    element={
+                      <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">Loading Math Tools...</div>}>
+                        <MathToolsPage />
+                      </Suspense>
+                    }
+                  />
+                  <Route
+                    path="app/math-tools"
+                    element={
+                      <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">Loading Math Tools...</div>}>
+                        <MathToolsPage />
+                      </Suspense>
+                    }
+                  />
                   <Route path="settings" element={<SettingsPage />} />
                 </Route>
 

@@ -10,6 +10,7 @@ import {
   Banknote,
   Wallet,
   Zap,
+  Calculator,
   X,
   LogOut
 } from 'lucide-react';
@@ -24,6 +25,7 @@ export const MobileNav = ({ isOpen, onClose }) => {
     { label: 'Attendance & CT Marks', path: '/attendance', icon: CheckSquare },
     { label: 'Tests & Assignments', path: '/assessments', icon: FileCheck2 },
     { label: 'CGPA Calculator', path: '/cgpa', icon: GraduationCap },
+    { label: 'Math Tools', path: '/math-tools', icon: Calculator },
     { label: 'Tuition Tracker', path: '/tuition', icon: Banknote },
     { label: 'Expense Tracker', path: '/expenses', icon: Wallet },
     { label: 'Focus Mode', path: '/focus', icon: Zap },

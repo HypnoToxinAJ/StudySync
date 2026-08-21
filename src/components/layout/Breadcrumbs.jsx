@@ -11,6 +11,7 @@ export const Breadcrumbs = () => {
     attendance: 'Attendance & CT Marks',
     assessments: 'Tests & Assignments',
     cgpa: 'CGPA Calculator',
+    'math-tools': 'Math Tools',
     tuition: 'Tuition Tracker',
     expenses: 'Expense Tracker',
     focus: 'Focus Mode',

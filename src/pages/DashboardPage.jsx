@@ -13,6 +13,7 @@ import {
   Banknote,
   Wallet,
   Zap,
+  Calculator,
   Plus,
   Pin,
   ExternalLink,
@@ -696,32 +697,41 @@ export const DashboardPage = () => {
               </a>
 
               <a
-                href="#/focus"
-                className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-indigo-500/10 hover:border-indigo-500/30 border border-slate-200/60 dark:border-slate-700/60 transition-all flex items-center justify-between group"
+                href="#/math-tools"
+                className="p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 hover:bg-violet-500/10 hover:border-violet-500/30 border border-slate-200/60 dark:border-slate-700/60 transition-all flex items-center justify-between group"
               >
                 <div className="flex items-center space-x-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
-                    <FileText className="w-4 h-4" />
+                  <div className="w-8 h-8 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center">
+                    <Calculator className="w-4 h-4" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-indigo-500 transition-colors">
-                      PDF Study Viewer
+                    <h4 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-violet-500 transition-colors">
+                      Desmos Math Tools
                     </h4>
-                    <p className="text-[10px] text-slate-400">Search, markup & annotations</p>
+                    <p className="text-[10px] text-slate-400">Graphing, Scientific & 3D Calculators</p>
                   </div>
                 </div>
-                <span className="text-xs font-bold text-indigo-500 group-hover:translate-x-0.5 transition-transform">→</span>
+                <span className="text-xs font-bold text-violet-500 group-hover:translate-x-0.5 transition-transform">→</span>
               </a>
             </div>
           </div>
 
-          <button
-            onClick={() => window.location.hash = '/focus'}
-            className="w-full py-3 bg-slate-900 dark:bg-slate-800 hover:bg-brand-600 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-2"
-          >
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            <span>Open Focus Station</span>
-          </button>
+          <div className="flex space-x-2">
+            <button
+              onClick={() => window.location.hash = '/math-tools'}
+              className="flex-1 py-2.5 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-1.5"
+            >
+              <Calculator className="w-3.5 h-3.5" />
+              <span>Math Tools</span>
+            </button>
+            <button
+              onClick={() => window.location.hash = '/focus'}
+              className="flex-1 py-2.5 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center space-x-1.5"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Focus Mode</span>
+            </button>
+          </div>
         </div>
       </div>
 
