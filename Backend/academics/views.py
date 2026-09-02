@@ -2,7 +2,8 @@ import hashlib
 import logging
 import re
 import uuid
-from datetime import time
+from datetime import datetime
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import transaction
@@ -44,6 +45,7 @@ ROUTINE_COLORS = (
     '#14B8A6',
     '#F97316',
 )
+SUBGROUP_PATTERN = re.compile(r'^[A-Z]\d{1,2}$')
 
 
 def weekday_ordering():
@@ -79,6 +81,15 @@ def infer_class_type(course_name):
 def color_for_course(course_name):
     digest = hashlib.sha256(course_name.lower().encode('utf-8')).digest()
     return ROUTINE_COLORS[digest[0] % len(ROUTINE_COLORS)]
+
+
+def normalize_subgroup(value):
+    """Normalize a dynamic subgroup such as A1, B2, or C12."""
+
+    subgroup = re.sub(r'[\s_-]+', '', str(value or '')).upper()
+    if not SUBGROUP_PATTERN.fullmatch(subgroup):
+        raise ValueError('Enter a subgroup as one section letter followed by 1–2 digits.')
+    return subgroup
 
 
 def validate_image(upload):
@@ -129,6 +140,11 @@ class RoutineImageImportView(APIView):
         if image_error:
             message, response_status = image_error
             return Response({'detail': message}, status=response_status)
+        try:
+            subgroup = normalize_subgroup(request.data.get('subgroup'))
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        section_letter = subgroup[0]
         if not settings.GEMINI_API_KEY:
             return Response(
                 {'detail': 'Gemini routine import is not configured.'},
@@ -136,7 +152,12 @@ class RoutineImageImportView(APIView):
             )
 
         try:
-            extracted = extract_schedule(upload.read(), upload.content_type)
+            extracted = extract_schedule(
+                upload.read(),
+                upload.content_type,
+                subgroup,
+                section_letter,
+            )
         except PydanticValidationError:
             logger.warning('Gemini routine response failed schema validation.', exc_info=True)
             return Response(
@@ -175,28 +196,33 @@ class RoutineImageImportView(APIView):
                 item.day_of_week,
                 item.start_time,
                 item.end_time,
-                item.course_name.casefold(),
+                item.course_code.casefold(),
                 item.room.casefold(),
             )
             if signature in seen:
                 continue
             seen.add(signature)
-            course_code = infer_course_code(item.course_name)
-            class_type = infer_class_type(item.course_name)
+            course_code = item.course_code.upper()
+            class_type = infer_class_type(f'{course_code} {item.course_title}')
             records.append(
                 Routine(
                     user=request.user,
                     course_code=course_code,
-                    course_title=item.course_name,
+                    course_title=item.course_title,
+                    faculty=item.teacher_name,
+                    teacher_name=item.teacher_name,
+                    credit=Decimal(item.credit),
                     course_type=(
                         'lab' if class_type == Routine.ClassType.LAB else class_type
                     ),
                     class_type=class_type,
                     day_of_week=DAY_MAP[item.day_of_week],
-                    start_time=time.fromisoformat(item.start_time),
-                    end_time=time.fromisoformat(item.end_time),
+                    start_time=datetime.strptime(item.start_time, '%I:%M %p').time(),
+                    end_time=datetime.strptime(item.end_time, '%I:%M %p').time(),
                     room=item.room,
-                    color=color_for_course(item.course_name),
+                    group=subgroup,
+                    section=section_letter,
+                    color=color_for_course(course_code),
                     source=Routine.Source.OCR_IMPORT,
                     import_id=import_id,
                 )
@@ -225,6 +251,9 @@ class RoutineImageImportView(APIView):
                 source_file_name=upload.name[:255],
                 source_file_type=upload.content_type,
                 source_file_page_count=1,
+                detected_groups=[subgroup],
+                selected_group=subgroup,
+                section=section_letter,
                 created_routine_ids=[record.pk for record in created],
                 warnings=[],
             )
@@ -235,6 +264,8 @@ class RoutineImageImportView(APIView):
                 'importId': import_id,
                 'created': len(created),
                 'replaced': replaced_count,
+                'subgroup': subgroup,
+                'section': section_letter,
                 'routines': payload,
             },
             status=status.HTTP_201_CREATED,

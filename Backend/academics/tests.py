@@ -6,7 +6,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from rest_framework.test import APITestCase
 
-from .gemini_routine import ExtractedClass, ExtractedSchedule
+from .gemini_routine import ExtractedClass, ExtractedSchedule, merge_contiguous_classes
 from .models import Routine, RoutineImport
 
 
@@ -58,16 +58,22 @@ class RoutineApiTests(APITestCase):
         mocked_extract.return_value = [
             ExtractedClass(
                 day_of_week='SUNDAY',
-                course_name='CSE 311 Database Management Systems',
-                start_time='09:00:00',
-                end_time='09:50:00',
+                course_code='CSE-311',
+                course_title='Database Management Systems',
+                credit='3.0',
+                teacher_name='Dr. Example Teacher',
+                start_time='09:00 AM',
+                end_time='09:50 AM',
                 room='Room 304',
             ),
             ExtractedClass(
                 day_of_week='THURSDAY',
-                course_name='CSE 312 Database Sessional Lab',
-                start_time='14:00:00',
-                end_time='16:30:00',
+                course_code='CSE-312',
+                course_title='Database Sessional Lab',
+                credit='1.5',
+                teacher_name='Lab Instructor',
+                start_time='02:00 PM',
+                end_time='04:30 PM',
                 room='Software Lab',
             ),
         ]
@@ -75,7 +81,7 @@ class RoutineApiTests(APITestCase):
 
         response = self.client.post(
             '/api/v1/academics/routines/import-image/',
-            {'image': self.image_file()},
+            {'file': self.image_file(), 'subgroup': 'B2'},
             format='multipart',
         )
 
@@ -84,28 +90,40 @@ class RoutineApiTests(APITestCase):
         self.assertEqual(Routine.objects.count(), 2)
         self.assertEqual(RoutineImport.objects.count(), 1)
         sunday = Routine.objects.get(day_of_week='Sunday')
-        self.assertEqual(sunday.course_code, 'CSE 311')
+        self.assertEqual(sunday.course_code, 'CSE-311')
         self.assertEqual(sunday.room, 'Room 304')
+        self.assertEqual(sunday.teacher_name, 'Dr. Example Teacher')
+        self.assertEqual(str(sunday.credit), '3.00')
+        self.assertEqual(sunday.group, 'B2')
+        self.assertEqual(sunday.section, 'B')
         self.assertEqual(sunday.source, Routine.Source.OCR_IMPORT)
         self.assertEqual(sunday.user.email, 'student@example.com')
         lab = Routine.objects.get(day_of_week='Thursday')
         self.assertEqual(lab.class_type, Routine.ClassType.SESSIONAL)
+        imported = RoutineImport.objects.get()
+        self.assertEqual(imported.selected_group, 'B2')
+        self.assertEqual(imported.section, 'B')
+        mocked_extract.assert_called_once()
+        self.assertEqual(mocked_extract.call_args.args[2:], ('B2', 'B'))
 
     @patch('academics.views.extract_schedule')
     def test_new_import_replaces_only_previous_ai_rows(self, mocked_extract):
         mocked_extract.return_value = [
             ExtractedClass(
                 day_of_week='MONDAY',
-                course_name='EEE 201 Circuits',
-                start_time='10:00:00',
-                end_time='10:50:00',
+                course_code='EEE-201',
+                course_title='Circuits',
+                credit='3.0',
+                teacher_name='Dr. Circuit Teacher',
+                start_time='10:00 AM',
+                end_time='10:50 AM',
                 room='',
             )
         ]
         self.authenticate()
         first = self.client.post(
             '/api/v1/academics/routines/import-image/',
-            {'image': self.image_file()},
+            {'file': self.image_file(), 'subgroup': 'A1'},
             format='multipart',
         )
         user_id = Routine.objects.get().user_id
@@ -121,7 +139,7 @@ class RoutineApiTests(APITestCase):
 
         second = self.client.post(
             '/api/v1/academics/routines/import-image/',
-            {'image': self.image_file()},
+            {'file': self.image_file(), 'subgroup': 'A1'},
             format='multipart',
         )
 
@@ -156,22 +174,54 @@ class RoutineApiTests(APITestCase):
         invalid = SimpleUploadedFile('routine.txt', b'not-an-image', content_type='text/plain')
         response = self.client.post(
             '/api/v1/academics/routines/import-image/',
-            {'image': invalid},
+            {'file': invalid, 'subgroup': 'B2'},
             format='multipart',
         )
         self.assertEqual(response.status_code, 415)
 
+    def test_import_requires_valid_dynamic_subgroup(self):
+        self.authenticate()
+        missing = self.client.post(
+            '/api/v1/academics/routines/import-image/',
+            {'file': self.image_file()},
+            format='multipart',
+        )
+        invalid = self.client.post(
+            '/api/v1/academics/routines/import-image/',
+            {'file': self.image_file(), 'subgroup': 'Section B'},
+            format='multipart',
+        )
+
+        self.assertEqual(missing.status_code, 400)
+        self.assertEqual(invalid.status_code, 400)
+
 
 class RoutineExtractionSchemaTests(APITestCase):
+    @staticmethod
+    def extracted(start_time, end_time):
+        return ExtractedClass(
+            day_of_week='THURSDAY',
+            course_code='CSE-312',
+            course_title='Computer Networks (Sessional)',
+            credit='1.5',
+            teacher_name='Dr. Example',
+            start_time=start_time,
+            end_time=end_time,
+            room='Network Lab',
+        )
+
     def test_schema_requires_strict_time_format_and_supported_day(self):
         with self.assertRaises(ValueError):
             ExtractedSchedule.model_validate(
                 [
                     {
                         'day_of_week': 'FRIDAY',
-                        'course_name': 'CSE 311',
+                        'course_code': 'CSE-311',
+                        'course_title': 'Computer Networks',
+                        'credit': '3.0',
+                        'teacher_name': 'Dr. Example',
                         'start_time': '9:00 AM',
-                        'end_time': '09:50:00',
+                        'end_time': '09:50 AM',
                         'room': '',
                     }
                 ]
@@ -183,10 +233,26 @@ class RoutineExtractionSchemaTests(APITestCase):
                 [
                     {
                         'day_of_week': 'SUNDAY',
-                        'course_name': 'CSE 311',
-                        'start_time': '10:00:00',
-                        'end_time': '09:00:00',
+                        'course_code': 'CSE-311',
+                        'course_title': 'Computer Networks',
+                        'credit': '3.0',
+                        'teacher_name': 'Dr. Example',
+                        'start_time': '10:00 AM',
+                        'end_time': '09:00 AM',
                         'room': '',
                     }
                 ]
             )
+
+    def test_contiguous_periods_are_merged_into_one_class(self):
+        merged = merge_contiguous_classes(
+            [
+                self.extracted('10:45 AM', '11:30 AM'),
+                self.extracted('11:30 AM', '12:15 PM'),
+                self.extracted('12:15 PM', '01:00 PM'),
+            ]
+        )
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].start_time, '10:45 AM')
+        self.assertEqual(merged[0].end_time, '01:00 PM')

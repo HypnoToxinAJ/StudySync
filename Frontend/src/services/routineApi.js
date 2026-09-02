@@ -17,14 +17,15 @@ export const routineApi = {
 
   importImage: (file, options = {}) => {
     const body = new FormData();
-    body.append('image', file, file.name);
+    body.append('file', file, file.name);
+    body.append('subgroup', options.subgroup || '');
     body.append(
       'replaceExistingImports',
       options.replaceExistingImports === false ? 'false' : 'true'
     );
     return apiClient.upload('/academics/routines/import-image/', body, {
       signal: options.signal,
-      timeout: 120_000
+      timeout: 180_000
     });
   }
 };

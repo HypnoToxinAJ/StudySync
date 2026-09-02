@@ -6,6 +6,14 @@ import { routineApi } from '../../../services/routineApi.js';
 
 const ACCEPTED_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const COMMON_SUBGROUPS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+const CUSTOM_GROUP = 'CUSTOM';
+const SUBGROUP_PATTERN = /^[A-Z]\d{1,2}$/;
+
+const normalizeSubgroup = value => String(value || '')
+  .trim()
+  .toUpperCase()
+  .replace(/[\s_-]+/g, '');
 
 const validateImage = file => {
   if (!file) return 'Select a routine image.';
@@ -20,8 +28,15 @@ export const ImageImportModal = ({ isOpen, onClose, onImported, onManualEntry })
   const abortRef = useRef(null);
   const [file, setFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
+  const [subgroupChoice, setSubgroupChoice] = useState('');
+  const [customSubgroup, setCustomSubgroup] = useState('');
   const [error, setError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  const subgroup = normalizeSubgroup(
+    subgroupChoice === CUSTOM_GROUP ? customSubgroup : subgroupChoice
+  );
+  const hasValidSubgroup = SUBGROUP_PATTERN.test(subgroup);
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -43,6 +58,8 @@ export const ImageImportModal = ({ isOpen, onClose, onImported, onManualEntry })
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     setFile(null);
     setPreviewUrl('');
+    setSubgroupChoice('');
+    setCustomSubgroup('');
     setError('');
     setIsProcessing(false);
     if (inputRef.current) inputRef.current.value = '';
@@ -55,6 +72,10 @@ export const ImageImportModal = ({ isOpen, onClose, onImported, onManualEntry })
   };
 
   const importRoutine = async () => {
+    if (!hasValidSubgroup) {
+      setError('Select a subgroup or enter one letter followed by 1–2 digits, such as B2.');
+      return;
+    }
     const validationError = validateImage(file);
     if (validationError) {
       setError(validationError);
@@ -67,7 +88,8 @@ export const ImageImportModal = ({ isOpen, onClose, onImported, onManualEntry })
     try {
       const result = await routineApi.importImage(file, {
         signal: abortRef.current.signal,
-        replaceExistingImports: true
+        replaceExistingImports: true,
+        subgroup
       });
       onImported?.(result.routines || [], result);
       reset();
@@ -93,6 +115,51 @@ export const ImageImportModal = ({ isOpen, onClose, onImported, onManualEntry })
               Upload a clear screenshot of your weekly class schedule. Existing manually added classes are preserved.
             </p>
           </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-950/30 p-4">
+          <div>
+            <label htmlFor="routine-subgroup" className="block text-xs font-extrabold text-slate-800 dark:text-slate-200">
+              Your subgroup <span className="text-rose-500">*</span>
+            </label>
+            <select
+              id="routine-subgroup"
+              value={subgroupChoice}
+              disabled={isProcessing}
+              onChange={event => {
+                setSubgroupChoice(event.target.value);
+                setError('');
+              }}
+              className="mt-2 w-full min-h-11 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm font-semibold text-slate-800 dark:text-slate-100 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:opacity-60"
+            >
+              <option value="">Select subgroup</option>
+              {COMMON_SUBGROUPS.map(option => <option key={option} value={option}>{option}</option>)}
+              <option value={CUSTOM_GROUP}>Custom subgroup…</option>
+            </select>
+          </div>
+
+          <div>
+            <label htmlFor="routine-custom-subgroup" className="block text-xs font-extrabold text-slate-800 dark:text-slate-200">
+              Custom subgroup
+            </label>
+            <input
+              id="routine-custom-subgroup"
+              type="text"
+              inputMode="text"
+              maxLength={4}
+              value={customSubgroup}
+              disabled={subgroupChoice !== CUSTOM_GROUP || isProcessing}
+              onChange={event => {
+                setCustomSubgroup(event.target.value.toUpperCase());
+                setError('');
+              }}
+              placeholder="e.g. D1"
+              className="mt-2 w-full min-h-11 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-sm font-semibold uppercase text-slate-800 dark:text-slate-100 outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-45"
+            />
+          </div>
+          <p className="sm:col-span-2 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+            Theory classes are matched to Section {subgroup ? subgroup[0] : '—'}; labs are limited to subgroup {subgroup || '—'}.
+          </p>
         </div>
 
         {error && (
@@ -141,7 +208,7 @@ export const ImageImportModal = ({ isOpen, onClose, onImported, onManualEntry })
           </button>
           <button
             type="button"
-            disabled={!file || isProcessing}
+            disabled={!file || !hasValidSubgroup || isProcessing}
             onClick={importRoutine}
             className="min-h-11 min-w-44 inline-flex items-center justify-center gap-2 px-5 rounded-xl bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-xs font-bold text-white shadow-lg shadow-cyan-600/20"
           >

@@ -1,10 +1,29 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Clock, Copy, Edit, RefreshCw, Trash2, User } from 'lucide-react';
+import { BookOpen, Clock, Copy, Edit, MapPin, RefreshCw, Trash2, User } from 'lucide-react';
 import { Badge } from '../../../components/common/Badge.jsx';
 import { routineApi } from '../../../services/routineApi.js';
 
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
+
+const formatTime12Hour = value => {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?(?:\s*(AM|PM))?$/i);
+  if (!match) return String(value || '');
+  const minutes = match[2];
+  if (match[3]) {
+    return `${String(Number(match[1])).padStart(2, '0')}:${minutes} ${match[3].toUpperCase()}`;
+  }
+  const hour24 = Number(match[1]);
+  const meridiem = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24 % 12 || 12;
+  return `${String(hour12).padStart(2, '0')}:${minutes} ${meridiem}`;
+};
+
+const formatCredit = value => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return '';
+  return Number.isInteger(numeric) ? numeric.toFixed(1) : String(numeric);
+};
 
 export const RoutineCalendar = ({
   localRoutines = [],
@@ -124,8 +143,8 @@ export const RoutineCalendar = ({
                           </div>
                         </div>
 
-                        <h4 className="text-xs font-bold mt-2 leading-tight">{routine.courseId}</h4>
-                        <p className="text-[11px] opacity-90 line-clamp-2">{routine.courseTitle}</p>
+                        <h4 className="text-sm font-extrabold mt-2 leading-tight">{routine.courseId}</h4>
+                        <p className="mt-0.5 text-[11px] font-semibold opacity-95 line-clamp-2">{routine.courseTitle}</p>
                         {routine.source === 'ocr-import' && (
                           <p className="mt-1 text-[9px] font-bold uppercase tracking-wide opacity-90">Gemini import</p>
                         )}
@@ -133,13 +152,24 @@ export const RoutineCalendar = ({
                         <div className="mt-2 pt-2 border-t border-white/20 text-[10px] space-y-1 opacity-90">
                           <div className="flex items-center gap-1">
                             <Clock className="w-3 h-3" />
-                            <span>{routine.startTime} - {routine.endTime}</span>
+                            <span>{formatTime12Hour(routine.startTime)} - {formatTime12Hour(routine.endTime)}</span>
                           </div>
-                          {routine.room && <p className="truncate">{routine.room}</p>}
-                          {routine.faculty && (
+                          {formatCredit(routine.credit) && (
+                            <div className="flex items-center gap-1">
+                              <BookOpen className="w-3 h-3" />
+                              <span>{formatCredit(routine.credit)} credits</span>
+                            </div>
+                          )}
+                          {routine.room && (
                             <div className="flex items-center gap-1 truncate">
-                              <User className="w-3 h-3" />
-                              <span className="truncate">{routine.faculty}</span>
+                              <MapPin className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{routine.room}</span>
+                            </div>
+                          )}
+                          {(routine.teacherName || routine.faculty) && (
+                            <div className="flex items-center gap-1 truncate">
+                              <User className="w-3 h-3 shrink-0" />
+                              <span className="truncate">{routine.teacherName || routine.faculty}</span>
                             </div>
                           )}
                         </div>

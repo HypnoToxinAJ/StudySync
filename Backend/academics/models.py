@@ -190,7 +190,12 @@ class Routine(UserOwnedModel):
     course_title = models.CharField(max_length=255)
     faculty = models.CharField(max_length=255, blank=True)
     teacher_name = models.CharField(max_length=255, blank=True)
-    credit = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    credit = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+    )
     course_type = models.CharField(
         max_length=16,
         choices=Course.CourseType.choices,
@@ -221,6 +226,10 @@ class Routine(UserOwnedModel):
     class Meta:
         ordering = ['day_of_week', 'start_time', 'course_code']
         constraints = [
+            models.CheckConstraint(
+                condition=Q(credit__gte=0),
+                name='academic_routine_credit_nonnegative',
+            ),
             models.CheckConstraint(
                 condition=Q(end_time__gt=F('start_time')),
                 name='academic_routine_end_after_start',
