@@ -1,9 +1,13 @@
 from datetime import datetime
 from typing import Literal
 
+# pyrefly: ignore [missing-import]
 from django.conf import settings
+# pyrefly: ignore [missing-import]
 from google import genai
+# pyrefly: ignore [missing-import]
 from google.genai import types
+# pyrefly: ignore [missing-import]
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 
@@ -11,8 +15,14 @@ TIME_PATTERN = r'^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$'
 RoutineDay = Literal['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY']
 
 
-class ExtractedClass(BaseModel):
-    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+class GeminiClassSchema(BaseModel):
+    """Gemini-compatible output schema.
+
+    Gemini's structured-output API rejects Pydantic's
+    ``additionalProperties: false`` keyword, so this permissive model is used
+    only to describe the response shape sent to Gemini. The response text is
+    subsequently validated with ``ExtractedClass``, which forbids extra keys.
+    """
 
     day_of_week: RoutineDay = Field(
         description='Uppercase weekday for the class, Sunday through Thursday only.'
@@ -35,6 +45,14 @@ class ExtractedClass(BaseModel):
         max_length=100,
         description='Room or lab exactly as shown; empty string when absent.',
     )
+
+
+class GeminiScheduleSchema(RootModel[list[GeminiClassSchema]]):
+    pass
+
+
+class ExtractedClass(GeminiClassSchema):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
 
     @model_validator(mode='after')
     def end_must_follow_start(self):
@@ -85,12 +103,12 @@ def extract_schedule(image_bytes, mime_type):
         config=types.GenerateContentConfig(
             temperature=0.1,
             response_mime_type='application/json',
-            response_schema=ExtractedSchedule,
+            response_schema=GeminiScheduleSchema,
         ),
     )
 
-    if isinstance(response.parsed, ExtractedSchedule):
-        return response.parsed.root
     if response.text:
+        # Validate the raw JSON with the strict application model. This catches
+        # extra properties as well as invalid days, times, and empty schedules.
         return ExtractedSchedule.model_validate_json(response.text).root
     raise ValueError('Gemini returned an empty routine response.')
