@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { storageService } from '../services/storageService';
 import { routineService } from '../services/routineService';
+import { routineApi } from '../services/routineApi';
 import { attendanceService } from '../services/attendanceService';
 import { marksService } from '../services/marksService';
 import { cgpaService } from '../services/cgpaService';
@@ -52,6 +53,9 @@ export const DataProvider = ({ children }) => {
 
   useEffect(() => {
     refreshData();
+    const handleSync = () => refreshData();
+    globalThis.addEventListener('studysync:synced', handleSync);
+    return () => globalThis.removeEventListener('studysync:synced', handleSync);
   }, []);
 
   const updateSidebarPreferences = (preferences) => {
@@ -65,21 +69,34 @@ export const DataProvider = ({ children }) => {
     if (conflicts.length > 0) {
       showToast(`Schedule Conflict Detected with ${conflicts[0].courseId} (${conflicts[0].startTime}-${conflicts[0].endTime})`, 'warning');
     }
-    routineService.add(data);
+    const created = routineService.add(data);
     refreshData();
     showToast('Routine entry added successfully!');
+    void routineApi.create(created).catch(error => {
+      showToast(error.message || 'The class is saved locally but could not reach the server.', 'warning');
+    });
   };
 
   const updateRoutine = (id, data) => {
-    routineService.update(id, data);
+    const updated = routineService.update(id, data);
     refreshData();
     showToast('Routine entry updated!');
+    if (updated) {
+      void routineApi.update(id, updated).catch(error => {
+        showToast(error.message || 'The update is saved locally but could not reach the server.', 'warning');
+      });
+    }
   };
 
   const deleteRoutine = (id) => {
     routineService.delete(id);
     refreshData();
     showToast('Routine entry removed.');
+    void routineApi.delete(id).catch(error => {
+      if (error.status !== 404) {
+        showToast(error.message || 'The class was removed locally but not from the server.', 'warning');
+      }
+    });
   };
 
   // --- Attendance & Missed-Class Handlers ---

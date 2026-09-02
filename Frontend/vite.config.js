@@ -1,8 +1,12 @@
-import { defineConfig } from 'vite';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { chromium } from 'playwright-core';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const challengeKey = createHash('sha256').update('studysync-local-cuet-challenge-secret').digest();
 
@@ -251,11 +255,39 @@ const cuetProxyPlugin = () => ({
   }
 });
 
-export default defineConfig({
-  plugins: [react(), cuetProxyPlugin()],
-  server: {
-    host: true,
-    port: 3000,
-    open: true,
-  },
+export default defineConfig(({ mode }) => {
+  const rootEnvDir = path.resolve(__dirname, '..');
+  const rootEnv = loadEnv(mode, rootEnvDir, '');
+  const configuredSupabaseUrl = rootEnv.VITE_SUPABASE_URL || rootEnv.SUPABASE_URL;
+  const supabaseAnonKey = rootEnv.VITE_SUPABASE_ANON_KEY || rootEnv.SUPABASE_ANON_KEY;
+
+  if (!configuredSupabaseUrl || !supabaseAnonKey) {
+    throw new Error(
+      'The root .env must define SUPABASE_URL and SUPABASE_ANON_KEY '
+      + '(or their VITE_ prefixed equivalents).'
+    );
+  }
+
+  const parsedSupabaseUrl = new URL(configuredSupabaseUrl);
+  if (!['https:', 'http:'].includes(parsedSupabaseUrl.protocol)) {
+    throw new Error('SUPABASE_URL must be an HTTP(S) URL.');
+  }
+  // Credentials copied from the REST API screen may include /rest/v1.
+  // Supabase clients need the project origin so Auth resolves to /auth/v1.
+  const supabaseUrl = parsedSupabaseUrl.origin;
+
+  return {
+    envDir: rootEnvDir,
+    // Only these public Supabase values are exposed to browser code.
+    define: {
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(supabaseUrl),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey)
+    },
+    plugins: [react(), cuetProxyPlugin()],
+    server: {
+      host: true,
+      port: 3000,
+      open: true,
+    },
+  };
 });

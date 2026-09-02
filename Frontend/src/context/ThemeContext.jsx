@@ -23,6 +23,19 @@ export const ThemeProvider = ({ children }) => {
     }
   }, [theme]);
 
+  useEffect(() => {
+    const useProfileTheme = event => {
+      const profileTheme = event.detail?.user?.themePreference;
+      if (profileTheme) setTheme(profileTheme);
+    };
+    globalThis.addEventListener('studysync:profile-hydrated', useProfileTheme);
+    globalThis.addEventListener('studysync:profile-synced', useProfileTheme);
+    return () => {
+      globalThis.removeEventListener('studysync:profile-hydrated', useProfileTheme);
+      globalThis.removeEventListener('studysync:profile-synced', useProfileTheme);
+    };
+  }, []);
+
   const toggleTheme = () => {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };

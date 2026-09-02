@@ -4,7 +4,7 @@ import { normalizeCourseId } from '../utils/routineValidationUtils.js';
 const makeId = prefix => `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
 const IMPORT_KEY = 'studysync_routine_imports';
 
-const writeJson = (key, value) => localStorage.setItem(key, JSON.stringify(value));
+const writeJson = (key, value) => storageService.set(key, value);
 
 export const routineImportService = {
   getImports: () => storageService.get(IMPORT_KEY, []),

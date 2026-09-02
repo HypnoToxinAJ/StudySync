@@ -1,102 +1,49 @@
-import { storageService } from './storageService';
+import { supabase } from './supabaseClient';
+
+const unwrap = ({ data, error }) => {
+  if (error) throw new Error(error.message || 'Authentication failed.', { cause: error });
+  return data;
+};
 
 export const authService = {
-  // Mock login with email/username & password
-  login: async (emailOrUsername, password) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const user = storageService.get(storageService.KEYS.USER, null);
-        const authenticatedUser = {
-          ...user,
-          name: user?.name || 'Tanvir Ahmed',
-          email: emailOrUsername || user?.email || 'tanvir.student@university.edu.bd',
-          isLoggedIn: true,
-          onboarded: true,
-          lastLogin: new Date().toISOString()
-        };
-        storageService.set(storageService.KEYS.USER, authenticatedUser);
-        resolve(authenticatedUser);
-      }, 100);
-    });
-  },
+  login: async (email, password) => unwrap(
+    await supabase.auth.signInWithPassword({ email, password })
+  ),
 
-  // Mock registration
-  register: async (userData) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const newUser = {
-          name: userData.name || 'New Student',
-          email: userData.email,
-          username: userData.email.split('@')[0],
-          university: userData.university || 'General University',
-          department: userData.department || 'Computer Science',
-          semester: userData.semester || '1st Semester',
-          studentId: userData.studentId || '2026001',
-          currency: userData.currency || 'BDT',
-          themePreference: 'dark',
-          weeklyClassDays: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"],
-          academicGoals: userData.academicGoals || '',
-          onboarded: false, // Trigger onboarding wizard
-          isLoggedIn: true
-        };
-        storageService.set(storageService.KEYS.USER, newUser);
-        resolve(newUser);
-      }, 600);
-    });
-  },
+  register: async ({ email, password, ...profile }) => unwrap(
+    await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { ...profile, onboarded: false } }
+    })
+  ),
 
-  // Google Login mock
-  loginWithGoogle: async () => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const googleUser = {
-          name: "Alex Vance",
-          email: "alex.vance@gmail.com",
-          username: "alex_vance",
-          university: "University of Engineering & Tech",
-          department: "Computer Science",
-          semester: "4th Semester",
-          studentId: "2024991",
-          currency: "BDT",
-          themePreference: "dark",
-          weeklyClassDays: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"],
-          onboarded: true,
-          isLoggedIn: true
-        };
-        storageService.set(storageService.KEYS.USER, googleUser);
-        resolve(googleUser);
-      }, 600);
-    });
-  },
+  loginWithGoogle: async () => unwrap(
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${globalThis.location.origin}${globalThis.location.pathname}`
+      }
+    })
+  ),
 
-  // Update onboarding parameters
-  completeOnboarding: async (onboardingData) => {
-    const user = storageService.get(storageService.KEYS.USER, {});
-    const updatedUser = {
-      ...user,
-      ...onboardingData,
-      onboarded: true
-    };
-    storageService.set(storageService.KEYS.USER, updatedUser);
-    return updatedUser;
-  },
+  restoreSession: async () => unwrap(await supabase.auth.getSession()),
 
-  // Mock forgot password
-  forgotPassword: async (email) => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        resolve({ success: true, message: `Password reset link has been dispatched to ${email}` });
-      }, 500);
-    });
-  },
+  completeOnboarding: async onboardingData => unwrap(
+    await supabase.auth.updateUser({ data: { ...onboardingData, onboarded: true } })
+  ),
 
-  // Logout
-  logout: () => {
-    const user = storageService.get(storageService.KEYS.USER, {});
-    storageService.set(storageService.KEYS.USER, { ...user, isLoggedIn: false });
-  },
+  forgotPassword: async email => unwrap(
+    await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${globalThis.location.origin}${globalThis.location.pathname}#/reset-password`
+    })
+  ),
 
-  getCurrentUser: () => {
-    return storageService.get(storageService.KEYS.USER, null);
-  }
+  resetPassword: async ({ password }) => unwrap(
+    await supabase.auth.updateUser({ password })
+  ),
+
+  logout: async () => unwrap(await supabase.auth.signOut()),
+
+  getCurrentUser: async () => unwrap(await supabase.auth.getUser())
 };

@@ -1,4 +1,5 @@
 import { normalizeRoutineOcrResponse } from '../utils/routineOcrNormalizer.js';
+import { apiClient } from '../../../services/apiClient.js';
 
 export const ROUTINE_OCR_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp';
 const SUPPORTED_MIME_TYPES = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
@@ -76,7 +77,7 @@ const mapServiceError = error => {
 };
 
 export const routineOcrService = {
-  isMockMode: () => import.meta.env?.VITE_ROUTINE_OCR_MOCK !== 'false' || !import.meta.env?.VITE_ROUTINE_OCR_ENDPOINT,
+  isMockMode: () => import.meta.env?.VITE_ROUTINE_OCR_MOCK !== 'false',
 
   extractRoutine: async (file, { signal, onProgress, includedPages = [] } = {}) => {
     const validation = validateRoutineFile(file);
@@ -106,14 +107,9 @@ export const routineOcrService = {
       if (includedPages.length) body.append('includedPages', JSON.stringify(includedPages));
       onProgress?.({ phase: 'uploading', percent: 10, message: 'Uploading securely…' });
       try {
-        const response = await fetch(import.meta.env.VITE_ROUTINE_OCR_ENDPOINT, { method: 'POST', body, signal: controller.signal, credentials: 'same-origin' });
-        if (!response.ok) {
-          if (response.status === 400 || response.status === 415 || response.status === 422) throw new Error('We couldn’t read this file. Check that it is a valid routine PDF or image.');
-          if (response.status === 503) throw new Error('The OCR model is starting or unavailable. Please retry shortly.');
-          throw new Error('The OCR service is unavailable. You can retry or enter the routine manually.');
-        }
         onProgress?.({ phase: 'normalizing', percent: 90, message: 'Validating extracted data…' });
-        return normalizeRoutineOcrResponse(await response.json(), file);
+        const payload = await apiClient.upload('/routine-ocr/extract/', body, { signal: controller.signal });
+        return normalizeRoutineOcrResponse(payload, file);
       } finally {
         clearTimeout(timeout);
         signal?.removeEventListener('abort', abortFromCaller);

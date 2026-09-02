@@ -52,8 +52,8 @@ export const SettingsPage = () => {
     downloadAnchor.remove();
   };
 
-  const handleResetConfirm = () => {
-    storageService.resetAll();
+  const handleResetConfirm = async () => {
+    await storageService.resetAll();
     refreshData();
     window.location.reload();
   };
@@ -120,7 +120,7 @@ export const SettingsPage = () => {
             className="flex items-center space-x-2 px-5 py-2.5 bg-rose-500/10 text-rose-600 hover:bg-rose-500/20 font-bold text-xs rounded-xl transition-all"
           >
             <RotateCcw className="w-4 h-4" />
-            <span>Reset Workspace to Default Mock Data</span>
+            <span>Clear Workspace Data</span>
           </button>
         </div>
       </div>
@@ -130,7 +130,7 @@ export const SettingsPage = () => {
         onClose={() => setIsResetConfirmOpen(false)}
         onConfirm={handleResetConfirm}
         title="Reset StudySync Workspace?"
-        message="This action will clear your custom entries and reset your workspace to pre-seeded mock university student data."
+        message="This permanently clears your courses, routines, assessments, finance records, notes, and other workspace data from every synced device."
       />
     </div>
   );

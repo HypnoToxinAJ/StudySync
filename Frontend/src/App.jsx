@@ -7,6 +7,8 @@ import { DataProvider } from './context/DataContext';
 
 import { AppShell } from './components/layout/AppShell';
 import { AuthPage } from './pages/AuthPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { OnboardingModal } from './components/auth/OnboardingModal';
 import { DashboardPage } from './pages/DashboardPage';
 import { RoutinePage } from './pages/RoutinePage';
 import { AttendancePage } from './pages/AttendancePage';
@@ -24,7 +26,12 @@ const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
   if (loading) return null;
   if (!user || !user.isLoggedIn) return <Navigate to="/login" replace />;
-  return children;
+  return (
+    <>
+      {children}
+      {user && !user.onboarded && <OnboardingModal isOpen={true} onClose={() => {}} />}
+    </>
+  );
 };
 
 export const App = () => {
@@ -36,6 +43,7 @@ export const App = () => {
             <HashRouter>
               <Routes>
                 <Route path="/login" element={<AuthPage />} />
+                <Route path="/reset-password" element={<ResetPasswordPage />} />
 
                 <Route
                   path="/"

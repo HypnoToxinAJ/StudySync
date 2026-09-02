@@ -6,23 +6,19 @@ import interactionPlugin from '@fullcalendar/interaction';
 import {
   Calendar as CalendarIcon,
   Plus,
-  Trash2,
-  Edit,
   Clock,
-  User,
   AlertTriangle,
-  Copy,
   FileText,
   ClipboardList
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { Modal } from '../components/common/Modal';
-import { Badge } from '../components/common/Badge';
 import { Tabs } from '../components/common/Tabs';
 import { routineService, COURSE_COLOR_PRESETS } from '../services/routineService';
 import { combineLocalDateTime } from '../utils/assessmentUtils';
 import { RoutineImportButton } from '../features/routine/components/RoutineImportButton';
-import { RoutineUploadDialog } from '../features/routine/components/RoutineUploadDialog';
+import { ImageImportModal } from '../features/routine/components/ImageImportModal';
+import { RoutineCalendar } from '../features/routine/components/RoutineCalendar';
 import { routineImportService } from '../features/routine/services/routineImportService';
 import { deriveSectionFromGroup } from '../features/routine/utils/groupSectionUtils';
 
@@ -35,7 +31,7 @@ const ASSESSMENT_COLORS = {
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'];
 
 export const RoutinePage = () => {
-  const { routines, addRoutine, updateRoutine, deleteRoutine, assessments, archivedRoutineEvents, courses, refreshData } = useData();
+  const { routines, addRoutine, updateRoutine, deleteRoutine, assessments, archivedRoutineEvents, refreshData } = useData();
 
   const [activeTab, setActiveTab] = useState('weekly');
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -44,10 +40,9 @@ export const RoutinePage = () => {
   const [showArchivedHistory, setShowArchivedHistory] = useState(true);
   const [selectedArchivedEvent, setSelectedArchivedEvent] = useState(null);
   const [isImportOpen, setIsImportOpen] = useState(false);
+  const [routineRefreshToken, setRoutineRefreshToken] = useState(0);
 
   const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const todayDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
-
   const [form, setForm] = useState({
     courseId: 'CSE-311',
     courseTitle: 'Database Management Systems',
@@ -267,6 +262,25 @@ export const RoutinePage = () => {
     refreshData();
   };
 
+  const handleImageImported = (importedRoutines) => {
+    const manualRoutines = routineService
+      .getAll()
+      .filter(item => item.source !== 'ocr-import');
+    routineService.saveAll([...manualRoutines, ...importedRoutines]);
+    refreshData();
+    setRoutineRefreshToken(token => token + 1);
+  };
+
+  const handleRoutinesFetched = (serverRoutines) => {
+    const byId = new Map(routineService.getAll().map(item => [String(item.id), item]));
+    serverRoutines.forEach(item => byId.set(String(item.id), item));
+    const merged = [...byId.values()];
+    if (JSON.stringify(merged) !== JSON.stringify(routineService.getAll())) {
+      routineService.saveAll(merged);
+      refreshData();
+    }
+  };
+
   const renderAssessmentBadge = (ast) => {
     const colors = ASSESSMENT_COLORS[ast.type] || ASSESSMENT_COLORS.CT;
     const Icon = ast.type === 'assignment' ? ClipboardList : FileText;
@@ -331,90 +345,16 @@ export const RoutinePage = () => {
       </div>
 
       {activeTab === 'weekly' && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-          {WEEKDAYS.map((day) => {
-            const dayRoutines = routines.filter(r => r.dayOfWeek === day);
-            const dayAssessments = assessmentsByDay[day] || [];
-            const isToday = day === todayDayName;
-
-            return (
-              <div
-                key={day}
-                className={`p-4 rounded-2xl border transition-all ${isToday
-                    ? 'bg-brand-500/5 border-brand-500/40 ring-2 ring-brand-500/20'
-                    : 'bg-white dark:bg-slate-900 border-slate-200/80 dark:border-slate-800'
-                  }`}
-              >
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-3">
-                  <span className={`text-xs font-extrabold uppercase tracking-wider ${isToday ? 'text-brand-600 dark:text-brand-400' : 'text-slate-700 dark:text-slate-300'
-                    }`}>
-                    {day}
-                  </span>
-                  {isToday && <Badge variant="indigo" size="sm">Today</Badge>}
-                </div>
-
-                <div className="space-y-3">
-                  {dayRoutines.length === 0 && dayAssessments.length === 0 ? (
-                    <p className="text-[11px] text-slate-400 py-6 text-center italic">
-                      No classes scheduled
-                    </p>
-                  ) : (
-                    <>
-                      {dayRoutines.map((rt) => (
-                        <div
-                          key={rt.id}
-                          className="group p-3 rounded-xl border text-white shadow-sm transition-all hover:scale-[1.02] relative"
-                          style={{ backgroundColor: rt.color || '#4F46E5' }}
-                        >
-                          <div className="flex justify-between items-start">
-                            <span className="text-[10px] font-bold uppercase tracking-wider bg-black/20 px-2 py-0.5 rounded-md">
-                              {rt.classType}
-                            </span>
-                            <div className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100 flex items-center space-x-1 transition-opacity bg-black/30 p-1 rounded-lg">
-                              <button type="button" onClick={() => handleOpenEdit(rt)} aria-label={`Edit ${rt.courseId}`} title="Edit">
-                                <Edit className="w-3 h-3 text-white" />
-                              </button>
-                              <button type="button" onClick={() => handleDuplicate(rt)} aria-label={`Duplicate ${rt.courseId}`} title="Duplicate">
-                                <Copy className="w-3 h-3 text-white" />
-                              </button>
-                              <button type="button" onClick={() => deleteRoutine(rt.id)} aria-label={`Delete ${rt.courseId}`} title="Delete">
-                                <Trash2 className="w-3 h-3 text-rose-300" />
-                              </button>
-                            </div>
-                          </div>
-
-                          <h4 className="text-xs font-bold mt-2 leading-tight">{rt.courseId}</h4>
-                          <p className="text-[11px] opacity-90 truncate">{rt.courseTitle}</p>
-                          {rt.source === 'ocr-import' && <p className="mt-1 text-[9px] font-bold uppercase tracking-wide opacity-90">Imported{rt.manuallyEdited ? ' · manually edited' : ''}</p>}
-
-                          <div className="mt-2 pt-2 border-t border-white/20 text-[10px] space-y-0.5 opacity-90">
-                            <div className="flex items-center space-x-1">
-                              <Clock className="w-3 h-3" />
-                              <span>{rt.startTime} - {rt.endTime}</span>
-                            </div>
-                            {rt.faculty && (
-                              <div className="flex items-center space-x-1 truncate">
-                                <User className="w-3 h-3" />
-                                <span className="truncate">{rt.faculty}</span>
-                              </div>
-                            )}
-                            {(rt.group || rt.section) && <div className="truncate">{rt.group ? `Group ${rt.group}` : `Section ${rt.section}`}</div>}
-                          </div>
-                        </div>
-                      ))}
-
-                      {dayAssessments.length > 0 && (
-                        <div className="space-y-2 pt-1">
-                          {dayAssessments.map(renderAssessmentBadge)}
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <RoutineCalendar
+          localRoutines={routines}
+          assessmentsByDay={assessmentsByDay}
+          renderAssessment={renderAssessmentBadge}
+          onEdit={handleOpenEdit}
+          onDuplicate={handleDuplicate}
+          onDelete={deleteRoutine}
+          onRoutinesFetched={handleRoutinesFetched}
+          refreshToken={routineRefreshToken}
+        />
       )}
 
       {activeTab === 'monthly' && (
@@ -495,12 +435,10 @@ export const RoutinePage = () => {
         </div>
       )}
 
-      <RoutineUploadDialog
+      <ImageImportModal
         isOpen={isImportOpen}
         onClose={() => setIsImportOpen(false)}
-        routines={routines}
-        courses={courses}
-        onDataChanged={refreshData}
+        onImported={handleImageImported}
         onManualEntry={handleOpenAdd}
       />
 

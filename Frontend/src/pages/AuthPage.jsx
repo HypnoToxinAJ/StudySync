@@ -1,16 +1,13 @@
 import React, { useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { OnboardingModal } from '../components/auth/OnboardingModal';
 import { Modal } from '../components/common/Modal';
-import { GraduationCap, Lock, Mail, User, CheckCircle2, ArrowRight } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 export const AuthPage = () => {
-  const { user, login, register, loginWithGoogle } = useAuth();
-
-  if (user && user.isLoggedIn) {
-    return <Navigate to="/" replace />;
-  }
+  const { user, login, register, loginWithGoogle, forgotPassword } = useAuth();
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [isRegister, setIsRegister] = useState(false);
   const [isForgotPasswordOpen, setIsForgotPasswordOpen] = useState(false);
@@ -18,9 +15,9 @@ export const AuthPage = () => {
   const [forgotSent, setForgotSent] = useState(false);
 
   const [form, setForm] = useState({
-    name: 'Tanvir Ahmed',
-    email: 'tanvir.student@university.edu.bd',
-    password: 'password123',
+    name: '',
+    email: '',
+    password: '',
     university: 'Chittagong University of Engineering & Technology',
     department: 'Computer Science & Engineering',
     semester: '5th Semester'
@@ -28,12 +25,40 @@ export const AuthPage = () => {
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
-    if (isRegister) {
-      await register(form);
-    } else {
-      await login(form.email || 'tanvir.student@university.edu.bd', form.password || 'password123');
+    setErrorMessage('');
+    setIsSubmitting(true);
+    try {
+      if (isRegister) await register(form);
+      else await login(form.email, form.password);
+    } catch (error) {
+      setErrorMessage(error.message || 'Authentication failed. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
+
+  const handleGoogleLogin = async () => {
+    setErrorMessage('');
+    setIsSubmitting(true);
+    try {
+      await loginWithGoogle();
+    } catch (error) {
+      setErrorMessage(error.message || 'Google sign-in failed.');
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setErrorMessage('');
+    try {
+      await forgotPassword(forgotEmail);
+      setForgotSent(true);
+    } catch (error) {
+      setErrorMessage(error.message || 'Unable to send a reset link.');
+    }
+  };
+
+  if (user && user.isLoggedIn) return <Navigate to="/" replace />;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4 relative overflow-hidden">
@@ -55,6 +80,11 @@ export const AuthPage = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {errorMessage && (
+            <div role="alert" className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-300">
+              {errorMessage}
+            </div>
+          )}
           {isRegister && (
             <div>
               <label className="block text-xs font-bold text-slate-300 mb-1">Full Student Name</label>
@@ -107,9 +137,10 @@ export const AuthPage = () => {
 
           <button
             type="submit"
+            disabled={isSubmitting}
             className="w-full py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-brand-600/30 transition-all flex items-center justify-center space-x-2"
           >
-            <span>{isRegister ? 'Register & Complete Setup' : 'Sign In to Dashboard'}</span>
+            <span>{isSubmitting ? 'Please wait…' : (isRegister ? 'Register & Complete Setup' : 'Sign In to Dashboard')}</span>
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>
@@ -119,23 +150,19 @@ export const AuthPage = () => {
           <span className="bg-slate-900 px-3 text-[10px] uppercase font-bold text-slate-500">OR</span>
         </div>
 
-        {/* Mock Google Login */}
         <button
           type="button"
-          onClick={() => loginWithGoogle()}
-          className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl border border-slate-700 flex items-center justify-center space-x-2 transition-all"
+          onClick={handleGoogleLogin}
+          disabled={isSubmitting}
+          className="w-full py-3 bg-white hover:bg-slate-100 text-slate-900 font-bold text-xs rounded-xl transition-all flex items-center justify-center space-x-3 disabled:opacity-60"
         >
+          <svg viewBox="0 0 24 24" aria-hidden="true" className="w-4 h-4">
+            <path fill="#4285F4" d="M21.6 12.2c0-.7-.1-1.4-.2-2H12v3.9h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2c1.9-1.7 3-4.3 3-7.4Z" />
+            <path fill="#34A853" d="M12 22c2.7 0 5-.9 6.6-2.4l-3.2-2.5c-.9.6-2 1-3.4 1a5.8 5.8 0 0 1-5.4-4H3.3v2.6A10 10 0 0 0 12 22Z" />
+            <path fill="#FBBC05" d="M6.6 14a6 6 0 0 1 0-4V7.4H3.3a10 10 0 0 0 0 9.2L6.6 14Z" />
+            <path fill="#EA4335" d="M12 5.9c1.5 0 2.8.5 3.8 1.5l2.9-2.8A9.7 9.7 0 0 0 3.3 7.4L6.6 10A5.8 5.8 0 0 1 12 5.9Z" />
+          </svg>
           <span>Continue with Google</span>
-        </button>
-
-        {/* Quick Demo Instant Access */}
-        <button
-          type="button"
-          onClick={() => login('tanvir.student@university.edu.bd', 'password123')}
-          className="w-full py-2.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 font-bold text-xs rounded-xl flex items-center justify-center space-x-2 transition-all"
-        >
-          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-          <span>Quick Demo Access (Instant Workspace)</span>
         </button>
 
         <div className="text-center pt-2">
@@ -149,11 +176,11 @@ export const AuthPage = () => {
       </div>
 
       {/* Forgot Password Modal */}
-      <Modal isOpen={isForgotPasswordOpen} onClose={() => setIsForgotPasswordOpen(false)} title="Reset Password Mock">
+      <Modal isOpen={isForgotPasswordOpen} onClose={() => setIsForgotPasswordOpen(false)} title="Reset Password">
         <div className="space-y-4">
           {forgotSent ? (
             <div className="p-4 bg-emerald-500/10 text-emerald-300 rounded-xl text-xs font-semibold">
-              Mock password reset link sent to {forgotEmail}! Check your inbox.
+              If an account exists for {forgotEmail}, a reset link is on its way.
             </div>
           ) : (
             <>
@@ -166,7 +193,8 @@ export const AuthPage = () => {
                 className="w-full px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-xl outline-none text-white"
               />
               <button
-                onClick={() => setForgotSent(true)}
+                onClick={handleForgotPassword}
+                disabled={!forgotEmail}
                 className="w-full py-2.5 bg-brand-600 text-white text-xs font-bold rounded-xl"
               >
                 Send Reset Link
@@ -176,10 +204,6 @@ export const AuthPage = () => {
         </div>
       </Modal>
 
-      {/* Onboarding Modal trigger for first-time user */}
-      {user && !user.onboarded && (
-        <OnboardingModal isOpen={true} onClose={() => {}} />
-      )}
     </div>
   );
 };
