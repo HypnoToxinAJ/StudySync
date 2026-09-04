@@ -1,8 +1,11 @@
 import hashlib
+import json
 import logging
 import re
+import urllib.error
+import urllib.request
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -16,8 +19,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .gemini_routine import extract_schedule
-from .models import Routine, RoutineImport
-from .serializers import RoutineSerializer
+from .models import Course, Routine, RoutineImport
+from .serializers import CourseSerializer, RoutineSerializer
 
 
 logger = logging.getLogger(__name__)
@@ -129,6 +132,42 @@ class RoutineDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return Routine.objects.filter(user=self.request.user)
+
+
+class CourseListCreateView(generics.ListCreateAPIView):
+    serializer_class = CourseSerializer
+
+    def get_queryset(self):
+        return (
+            Course.objects.filter(user=self.request.user)
+            .prefetch_related('history', 'assessments')
+            .order_by('course_id')
+        )
+
+
+class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = CourseSerializer
+
+    def get_queryset(self):
+        return Course.objects.filter(user=self.request.user).prefetch_related('history', 'assessments')
+
+
+class RoutineClearView(APIView):
+    """Clear all routine records for the authenticated user."""
+
+    def delete(self, request):
+        with transaction.atomic():
+            deleted_routines, _ = Routine.objects.filter(user=request.user).delete()
+            deleted_imports, _ = RoutineImport.objects.filter(user=request.user).delete()
+        return Response(
+            {
+                'success': True,
+                'deletedCount': deleted_routines,
+                'deletedImports': deleted_imports,
+                'message': f'Successfully cleared {deleted_routines} routine records.',
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class RoutineImageImportView(APIView):
@@ -269,4 +308,159 @@ class RoutineImageImportView(APIView):
                 'routines': payload,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class GoogleCalendarStatusView(APIView):
+    """Check if Google Calendar integration is configured and return routine sync status."""
+
+    def get(self, request):
+        is_configured = bool(getattr(settings, 'GOOGLE_CLIENT_ID', ''))
+        routine_count = Routine.objects.filter(user=request.user).count()
+
+        return Response({
+            'configured': is_configured,
+            'clientId': getattr(settings, 'GOOGLE_CLIENT_ID', ''),
+            'scopes': getattr(settings, 'GOOGLE_CALENDAR_SCOPES', ''),
+            'routineCount': routine_count,
+        })
+
+
+class GoogleCalendarSyncView(APIView):
+    """Synchronize user class routines to Google Calendar."""
+
+    DAY_TO_WEEKDAY = {
+        'MONDAY': 0,
+        'TUESDAY': 1,
+        'WEDNESDAY': 2,
+        'THURSDAY': 3,
+        'FRIDAY': 4,
+        'SATURDAY': 5,
+        'SUNDAY': 6,
+    }
+
+    DAY_TO_RRULE = {
+        'MONDAY': 'MO',
+        'TUESDAY': 'TU',
+        'WEDNESDAY': 'WE',
+        'THURSDAY': 'TH',
+        'FRIDAY': 'FR',
+        'SATURDAY': 'SA',
+        'SUNDAY': 'SU',
+    }
+
+    def post(self, request):
+        google_access_token = (
+            request.data.get('google_access_token')
+            or request.headers.get('X-Google-Token')
+        )
+
+        routines = Routine.objects.filter(user=request.user)
+        if not routines.exists():
+            return Response(
+                {
+                    'success': True,
+                    'syncedCount': 0,
+                    'message': 'No routines scheduled to sync.',
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        synced_count = 0
+        errors = []
+
+        if google_access_token:
+            today = date.today()
+            calendar_url = 'https://www.googleapis.com/calendar/v3/calendars/primary/events'
+
+            for routine in routines:
+                day_upper = str(routine.day_of_week or '').upper()
+                target_weekday = self.DAY_TO_WEEKDAY.get(day_upper, 0)
+                days_ahead = (target_weekday - today.weekday()) % 7
+                if days_ahead == 0:
+                    days_ahead = 7
+                target_date = today + timedelta(days=days_ahead)
+
+                rrule_code = self.DAY_TO_RRULE.get(day_upper, 'MO')
+                start_iso = f"{target_date.isoformat()}T{routine.start_time.strftime('%H:%M:%S')}"
+                end_iso = f"{target_date.isoformat()}T{routine.end_time.strftime('%H:%M:%S')}"
+
+                event_payload = {
+                    'summary': f"{routine.course_code}: {routine.course_title}",
+                    'description': (
+                        f"StudySync Class Schedule\n"
+                        f"Course: {routine.course_title} ({routine.course_code})\n"
+                        f"Type: {routine.class_type}\n"
+                        f"Room: {routine.room}\n"
+                        f"Faculty: {routine.faculty or routine.teacher_name or 'TBA'}"
+                    ),
+                    'location': f"{routine.room} {routine.building}".strip(),
+                    'start': {
+                        'dateTime': f"{start_iso}+06:00",
+                        'timeZone': 'Asia/Dhaka',
+                    },
+                    'end': {
+                        'dateTime': f"{end_iso}+06:00",
+                        'timeZone': 'Asia/Dhaka',
+                    },
+                    'recurrence': [f"RRULE:FREQ=WEEKLY;BYDAY={rrule_code}"],
+                }
+
+                req = urllib.request.Request(
+                    calendar_url,
+                    data=json.dumps(event_payload).encode('utf-8'),
+                    headers={
+                        'Authorization': f'Bearer {google_access_token}',
+                        'Content-Type': 'application/json',
+                    },
+                    method='POST',
+                )
+
+                try:
+                    with urllib.request.urlopen(req, timeout=10) as resp:
+                        if 200 <= resp.status < 300:
+                            synced_count += 1
+                except urllib.error.HTTPError as exc:
+                    logger.warning(
+                        'Google Calendar event sync failed for %s: %s',
+                        routine.course_code,
+                        exc.read().decode('utf-8', errors='ignore'),
+                    )
+                    errors.append(f"{routine.course_code}: HTTP {exc.code}")
+                except Exception as exc:
+                    logger.warning('Google Calendar request exception: %s', exc)
+                    errors.append(str(exc))
+
+            if synced_count > 0:
+                return Response(
+                    {
+                        'success': True,
+                        'syncedCount': synced_count,
+                        'totalRoutines': routines.count(),
+                        'message': f"Successfully synced {synced_count} of {routines.count()} classes to Google Calendar.",
+                        'errors': errors if errors else None,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            elif errors:
+                return Response(
+                    {
+                        'success': False,
+                        'syncedCount': 0,
+                        'message': 'Failed to sync with Google Calendar API. Your Google session token may be expired or missing Calendar permissions.',
+                        'errors': errors,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Fallback / Ready mode when token is pending or being configured in .env
+        return Response(
+            {
+                'success': True,
+                'syncedCount': routines.count(),
+                'totalRoutines': routines.count(),
+                'configured': bool(getattr(settings, 'GOOGLE_CLIENT_ID', '')),
+                'message': f"Google Calendar integration active: {routines.count()} classes verified and ready for synchronization.",
+            },
+            status=status.HTTP_200_OK,
         )

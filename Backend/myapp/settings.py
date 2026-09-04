@@ -132,6 +132,10 @@ ROUTINE_IMAGE_MAX_BYTES = int(
     os.getenv('ROUTINE_IMAGE_MAX_BYTES', str(10 * 1024 * 1024))
 )
 
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
+GOOGLE_CALENDAR_SCOPES = os.getenv('GOOGLE_CALENDAR_SCOPES', 'https://www.googleapis.com/auth/calendar.events')
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'core.authentication.SupabaseJWTAuthentication',

@@ -35,8 +35,11 @@ export const DataProvider = ({ children }) => {
   // Reload all domain states from storage
   const refreshData = () => {
     storageService.initialize();
+    const loadedRoutines = routineService.getAll();
+    // Keep courses synchronized with class routine courses
+    attendanceService.syncCoursesWithRoutines(loadedRoutines);
     setCourses(attendanceService.getCourses());
-    setRoutines(routineService.getAll());
+    setRoutines(loadedRoutines);
     setAssessments(storageService.get(storageService.KEYS.ASSESSMENTS, []));
     setSemesters(cgpaService.getSemesters());
     setTuitions(tuitionService.getStudents());
@@ -70,6 +73,8 @@ export const DataProvider = ({ children }) => {
       showToast(`Schedule Conflict Detected with ${conflicts[0].courseId} (${conflicts[0].startTime}-${conflicts[0].endTime})`, 'warning');
     }
     const created = routineService.add(data);
+    // Sync newly added routine course to attendance & CT
+    attendanceService.syncCoursesWithRoutines(routineService.getAll());
     refreshData();
     showToast('Routine entry added successfully!');
     void routineApi.create(created).catch(error => {
@@ -79,6 +84,7 @@ export const DataProvider = ({ children }) => {
 
   const updateRoutine = (id, data) => {
     const updated = routineService.update(id, data);
+    attendanceService.syncCoursesWithRoutines(routineService.getAll());
     refreshData();
     showToast('Routine entry updated!');
     if (updated) {
@@ -101,21 +107,25 @@ export const DataProvider = ({ children }) => {
 
   // --- Attendance & Missed-Class Handlers ---
   const recordMissedClass = (courseId, date, reason) => {
-    attendanceService.recordMissedClass(courseId, date, reason);
-    refreshData();
-    showToast('Marked as Missed Class!', 'warning');
+    return recordAttendance(courseId, 'ABSENT', date, reason);
   };
 
   const recordAttendance = (courseId, status, date, reason) => {
-    attendanceService.recordAttendance(courseId, status, date, reason);
+    const res = attendanceService.recordAttendance(courseId, status, date, reason);
+    if (res && res.success === false) {
+      showToast(res.error || 'Failed to record attendance.', 'warning');
+      return false;
+    }
     refreshData();
-    showToast(status === 'missed' ? 'Marked as Missed Class!' : 'Attendance updated.', status === 'missed' ? 'warning' : 'info');
+    const isAbsent = String(status || '').toUpperCase() === 'ABSENT';
+    showToast(isAbsent ? 'Marked as Absent!' : 'Attendance marked as Present!', isAbsent ? 'warning' : 'success');
+    return true;
   };
 
   const undoLastMissed = (courseId) => {
-    attendanceService.undoLastMissed(courseId);
+    attendanceService.undoLastAttendance(courseId);
     refreshData();
-    showToast('Latest missed class record undone.');
+    showToast('Latest attendance record undone.');
   };
 
   const undoAttendance = (courseId) => {
@@ -123,27 +133,58 @@ export const DataProvider = ({ children }) => {
   };
 
   const updateMissedRecord = (courseId, recordId, data) => {
-    attendanceService.updateMissedRecord(courseId, recordId, data);
+    attendanceService.updateMissedRecord?.(courseId, recordId, data);
     refreshData();
-    showToast('Missed class record updated.');
+    showToast('Record updated.');
+  };
+
+  const deleteAttendanceRecord = (courseId, recordId) => {
+    const ok = attendanceService.deleteAttendanceRecord(courseId, recordId);
+    if (ok) {
+      refreshData();
+      showToast('Attendance record deleted.');
+    }
+    return ok;
   };
 
   const deleteMissedRecord = (courseId, recordId) => {
-    attendanceService.deleteMissedRecord(courseId, recordId);
-    refreshData();
-    showToast('Missed class record deleted.');
+    return deleteAttendanceRecord(courseId, recordId);
   };
 
   const addCourse = (data) => {
-    attendanceService.addCourse(data);
+    const created = attendanceService.addCourse(data);
     refreshData();
     showToast('New course added!');
+    return created;
   };
 
   const updateCourse = (id, data) => {
-    attendanceService.updateCourse(id, data);
+    const updated = attendanceService.updateCourse(id, data);
+    // If course title or teacher changed, update matching routines as well
+    if (updated && (data.courseTitle || data.credit || data.teacherName || data.faculty || data.color)) {
+      const allRoutines = routineService.getAll();
+      const codeUpper = String(updated.courseId || '').trim().toUpperCase();
+      let changed = false;
+      const updatedRoutines = allRoutines.map(r => {
+        if (String(r.courseId || '').trim().toUpperCase() === codeUpper) {
+          changed = true;
+          return {
+            ...r,
+            courseTitle: data.courseTitle || r.courseTitle,
+            teacherName: data.faculty || data.teacherName || r.teacherName,
+            credit: data.credit !== undefined ? Number(data.credit) : r.credit,
+            color: data.color || r.color
+          };
+        }
+        return r;
+      });
+      if (changed) {
+        routineService.saveAll(updatedRoutines);
+      }
+    }
     refreshData();
     showToast('Course updated!');
+    return updated;
   };
 
   const deleteCourse = (id) => {
@@ -152,29 +193,42 @@ export const DataProvider = ({ children }) => {
     showToast('Course deleted.');
   };
 
-  // --- Course Inline Assessment Handlers ---
-  const addAssessmentToCourse = (courseId, assessmentData) => {
-    marksService.addAssessmentToCourse(courseId, assessmentData);
+  // --- Course CT Marks Handlers ---
+  const addCTMark = (courseId, assessmentData) => {
+    const res = marksService.addCTMarkToCourse(courseId, assessmentData);
+    if (res && res.success === false) {
+      showToast(res.error || 'Failed to add CT mark.', 'warning');
+      return false;
+    }
     refreshData();
-    showToast('Assessment added to course!');
+    showToast('CT mark recorded successfully!');
+    return true;
   };
 
-  const updateAssessmentInCourse = (courseId, assessmentId, updatedData) => {
-    marksService.updateAssessmentInCourse(courseId, assessmentId, updatedData);
+  const updateCTMark = (courseId, assessmentId, updatedData) => {
+    const res = marksService.updateCTMarkInCourse(courseId, assessmentId, updatedData);
+    if (res && res.success === false) {
+      showToast(res.error || 'Failed to update CT mark.', 'warning');
+      return false;
+    }
     refreshData();
-    showToast('Assessment marks updated!');
+    showToast('CT mark updated!');
+    return true;
   };
 
-  const deleteAssessmentFromCourse = (courseId, assessmentId) => {
-    marksService.deleteAssessmentFromCourse(courseId, assessmentId);
+  const deleteCTMark = (courseId, assessmentId) => {
+    marksService.deleteCTMarkFromCourse(courseId, assessmentId);
     refreshData();
-    showToast('Assessment removed from course.');
+    showToast('CT mark removed.');
+    return true;
   };
 
+  // Backward-compatibility aliases
+  const addAssessmentToCourse = (courseId, data) => addCTMark(courseId, data);
+  const updateAssessmentInCourse = (courseId, id, data) => updateCTMark(courseId, id, data);
+  const deleteAssessmentFromCourse = (courseId, id) => deleteCTMark(courseId, id);
   const toggleAssessmentMissed = (courseId, assessmentId) => {
-    marksService.toggleAssessmentMissed(courseId, assessmentId);
-    refreshData();
-    showToast('Assessment status toggled.');
+    deleteCTMark(courseId, assessmentId);
   };
 
   // --- Assessment / Test & Assignment Handlers ---
@@ -628,10 +682,14 @@ export const DataProvider = ({ children }) => {
       undoLastMissed,
       updateMissedRecord,
       deleteMissedRecord,
+      deleteAttendanceRecord,
       addCourse,
       updateCourse,
       deleteCourse,
-      // Inline course assessment actions
+      // Inline course assessment & CT actions
+      addCTMark,
+      updateCTMark,
+      deleteCTMark,
       addAssessmentToCourse,
       updateAssessmentInCourse,
       deleteAssessmentFromCourse,

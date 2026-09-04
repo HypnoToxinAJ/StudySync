@@ -136,11 +136,12 @@ export const AuthProvider = ({ children }) => {
     return applySession(data.session);
   };
 
-  const loginWithGoogle = async () => {
+  const loginWithGoogle = async (customOptions = {}) => {
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: oauthRedirectUrl()
+        redirectTo: oauthRedirectUrl(),
+        ...customOptions
       }
     });
     throwIfError(error);

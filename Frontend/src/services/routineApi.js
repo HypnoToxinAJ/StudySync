@@ -27,7 +27,13 @@ export const routineApi = {
       signal: options.signal,
       timeout: 180_000
     });
-  }
+  },
+
+  getCalendarStatus: () => apiClient.get('/academics/calendar/status/'),
+
+  syncCalendar: (data = {}) => apiClient.post('/academics/calendar/sync/', data),
+
+  clearAll: () => apiClient.delete('/academics/routines/clear/')
 };
 
 export default routineApi;

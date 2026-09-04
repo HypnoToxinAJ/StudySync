@@ -31,6 +31,7 @@ import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { StatCard } from '../components/common/StatCard';
 import { Badge } from '../components/common/Badge';
+import { ProgressBar } from '../components/common/ProgressBar';
 import { Modal } from '../components/common/Modal';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { ShortcutIconResolver } from '../components/common/shortcutIconResolver';
@@ -39,6 +40,7 @@ import { shortcutService } from '../services/shortcutService';
 import { cgpaService } from '../services/cgpaService';
 import { tuitionService } from '../services/tuitionService';
 import { expenseService } from '../services/expenseService';
+import { attendanceService } from '../services/attendanceService';
 
 export const DashboardPage = () => {
   const { user } = useAuth();
@@ -126,7 +128,12 @@ export const DashboardPage = () => {
     .filter(r => (!r.effectiveStartDate || r.effectiveStartDate <= todayDate) && (!r.effectiveEndDate || r.effectiveEndDate >= todayDate))
     .sort((left, right) => left.startTime.localeCompare(right.startTime));
 
-  const attendanceRisks = courses.filter(c => c.missedClasses >= Math.floor(c.credit || 3));
+  const overallAttendance = attendanceService.getOverallAttendanceStats(courses);
+  const coursesNeedingAttention = courses.filter(c => {
+    const stats = attendanceService.calculateAttendanceStats(c);
+    return stats.hasDeductionRisk || stats.isLimitReached;
+  });
+  const attendanceRisks = coursesNeedingAttention;
   const upcomingAssessments = assessments.filter(a => a.date >= new Date().toISOString().split('T')[0]);
 
   const { cgpa } = cgpaService.calculateOverallCGPA();
@@ -343,15 +350,77 @@ export const DashboardPage = () => {
           actionLabel="View Routine"
           onClick={() => window.location.hash = '/routine'}
         />
-        <StatCard
-          title="Attendance Risk"
-          value={`${attendanceRisks.length} Courses`}
-          subtext={attendanceRisks.length === 0 ? 'All courses safe & safe attendance' : `${attendanceRisks.map(c=>c.courseId).join(', ')} at risk!`}
-          icon={CheckSquare}
-          color={attendanceRisks.length > 0 ? 'rose' : 'emerald'}
-          actionLabel="Check Attendance"
-          onClick={() => window.location.hash = '/attendance'}
-        />
+        {/* SECTION 10: ATTENDANCE DASHBOARD WIDGET */}
+        <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between h-[420px] gap-3">
+          <div className="flex items-center justify-between gap-3 shrink-0">
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-slate-400">Attendance</p>
+              <div className="flex items-baseline space-x-2 mt-1">
+                <span className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
+                  {overallAttendance.overallPercentage}%
+                </span>
+                <span className="text-xs font-semibold text-slate-400">Overall</span>
+              </div>
+            </div>
+            <div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${coursesNeedingAttention.length > 0 ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400' : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'}`}>
+              <CheckSquare className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200/50 dark:border-slate-700/50 space-y-2 shrink-0">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-slate-400 font-semibold">Classes Attended</span>
+              <span className="font-extrabold text-slate-900 dark:text-white">
+                {overallAttendance.attendedClasses} / {overallAttendance.totalClasses} Classes
+              </span>
+            </div>
+            <ProgressBar
+              value={overallAttendance.overallPercentage}
+              color={overallAttendance.overallPercentage >= 85 ? '#10B981' : overallAttendance.overallPercentage >= 75 ? '#F59E0B' : '#EF4444'}
+              height="h-2"
+            />
+          </div>
+
+          {/* Courses Needing Attention or Safe Status */}
+          <div className="space-y-2 flex-1 overflow-y-auto overflow-x-hidden pr-1 my-1 scrollbar-thin">
+            {coursesNeedingAttention.length > 0 ? (
+              <div className="space-y-1.5">
+                <div className="flex items-center space-x-1.5 text-xs font-bold text-rose-600 dark:text-rose-400 px-1">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{coursesNeedingAttention.length} Course{coursesNeedingAttention.length === 1 ? '' : 's'} Need Attention</span>
+                </div>
+                {coursesNeedingAttention.map(c => {
+                  const s = attendanceService.calculateAttendanceStats(c);
+                  return (
+                    <div key={c.id} className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-between text-xs">
+                      <div className="min-w-0 pr-2">
+                        <span className="font-extrabold text-slate-900 dark:text-white truncate block">{c.courseId}</span>
+                        <span className="text-[10px] text-slate-400 block truncate">{c.courseTitle}</span>
+                      </div>
+                      <Badge variant={s.hasDeductionRisk ? 'rose' : 'amber'} size="sm">
+                        {s.statusLabel}
+                      </Badge>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-700 dark:text-emerald-300 flex items-center space-x-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-500" />
+                <span className="font-semibold">All courses are currently within safe missed limits!</span>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => window.location.hash = '/attendance'}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 px-4 py-2.5 text-xs font-bold text-white transition-colors shrink-0 border-t border-slate-100 dark:border-slate-800"
+          >
+            <span>View Attendance</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+        </div>
         <div className="p-5 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between h-[420px] gap-3">
           <div className="flex items-center justify-between gap-3 shrink-0">
             <div>

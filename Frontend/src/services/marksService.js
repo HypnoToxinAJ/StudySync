@@ -1,199 +1,353 @@
-import { storageService } from './storageService';
-import { attendanceService } from './attendanceService';
+import { attendanceService, COURSE_TYPES, normalizeCourseType } from './attendanceService.js';
+import { courseApi } from './courseApi.js';
 
 export const marksService = {
-  // Determine required best assessment count (3 for 3-cr theory, 2 for 2-cr theory, 0 for lab/sessional)
-  getTheoryBestAssessmentCount: (course) => {
-    const courseType = String(course?.courseType || 'theory').toLowerCase();
-    const credit = Number(course?.credit || 3.0);
-
-    if (courseType !== 'theory') {
-      return 0; // Lab / Sessional course -> CT marks not applicable
-    }
-    if (credit === 2.0) {
-      return 2;
-    }
-    return 3; // Default 3-credit theory -> best 3
+  // Determine whether CT marks apply to this course
+  isApplicable: (course) => {
+    return attendanceService.isTheory(course);
   },
 
-  // Pick top N assessment entries based on obtained marks without mutating original array
-  getBestAssessmentEntries: (course, assessments = null) => {
-    const courseAssessments = assessments || course?.assessments || [];
-    const bestCount = marksService.getTheoryBestAssessmentCount(course);
-
-    if (bestCount === 0 || courseAssessments.length === 0) {
-      return [];
-    }
-
-    // Clone array and sort descending by obtained mark safely
-    const sorted = [...courseAssessments].sort((a, b) => {
-      const markA = a.isMissed ? 0 : Number(a.obtainedMarks || 0);
-      const markB = b.isMissed ? 0 : Number(b.obtainedMarks || 0);
-      if (markB !== markA) {
-        return markB - markA;
-      }
-      // Tie-breaker by date or id for consistency
-      return new Date(b.date || 0) - new Date(a.date || 0);
-    });
-
-    return sorted.slice(0, Math.min(bestCount, sorted.length));
-  },
-
-  // Calculate sum of obtained marks for best selected assessments
-  calculateBestAssessmentTotal: (course, assessments = null) => {
-    const bestEntries = marksService.getBestAssessmentEntries(course, assessments);
-    return bestEntries.reduce((sum, ast) => {
-      const mark = ast.isMissed ? 0 : Number(ast.obtainedMarks || 0);
-      return sum + mark;
-    }, 0);
-  },
-
-  // Calculate total max marks for best selected assessments
-  calculateBestAssessmentMaximum: (course, assessments = null) => {
-    const bestEntries = marksService.getBestAssessmentEntries(course, assessments);
-    return bestEntries.reduce((sum, ast) => sum + Number(ast.totalMarks || 20), 0);
-  },
-
-  // Calculate percentage of best assessment score
-  calculateAssessmentPercentage: (course, assessments = null) => {
-    const obtainedTotal = marksService.calculateBestAssessmentTotal(course, assessments);
-    const maxTotal = marksService.calculateBestAssessmentMaximum(course, assessments);
-    if (maxTotal === 0) return 0;
-    return Number(((obtainedTotal / maxTotal) * 100).toFixed(1));
-  },
-
-  // Main summary generator for a course card
-  getCourseMarksSummary: (course) => {
-    const courseType = String(course?.courseType || 'theory').toLowerCase();
-    const isApplicable = courseType === 'theory';
-
-    if (!isApplicable) {
+  // Calculate CT structure automatically from credits: Total CTs = credits + 1, Best CTs = credits
+  getCourseCTStructure: (course) => {
+    if (!marksService.isApplicable(course)) {
       return {
         isApplicable: false,
-        message: 'Sessional course — CT marks not applicable',
+        totalCTs: 0,
         bestCount: 0,
-        currentCount: 0,
-        bestAssessments: [],
-        obtainedTotal: 0,
-        maxTotal: 0,
-        remainingMarks: 0,
-        percentage: 0,
-        performanceStatus: 'N/A'
+        message: 'CT marks are not applicable for Sessional/Lab courses.'
       };
     }
 
-    const assessments = course.assessments || [];
-    const bestCount = marksService.getTheoryBestAssessmentCount(course);
-    const bestEntries = marksService.getBestAssessmentEntries(course, assessments);
-    const bestEntryIds = new Set(bestEntries.map(e => e.id));
+    const credit = Number(course?.credit || 3.0);
+    const roundedCredit = Math.max(1, Math.round(credit));
+    const totalCTs = roundedCredit + 1; // e.g. 3 + 1 = 4 CTs; 2 + 1 = 3 CTs
+    const bestCount = roundedCredit;    // e.g. best 3; best 2
 
-    const obtainedTotal = marksService.calculateBestAssessmentTotal(course, assessments);
-    const maxTotal = marksService.calculateBestAssessmentMaximum(course, assessments);
-    const percentage = marksService.calculateAssessmentPercentage(course, assessments);
-    const remainingMarks = Math.max(0, maxTotal - obtainedTotal);
+    return {
+      isApplicable: true,
+      totalCTs,
+      bestCount,
+      message: `Best ${bestCount} of ${totalCTs}`
+    };
+  },
 
-    let performanceStatus = 'N/A';
-    if (assessments.length > 0) {
-      if (percentage >= 85) performanceStatus = 'Excellent';
-      else if (percentage >= 70) performanceStatus = 'Good';
-      else if (percentage >= 50) performanceStatus = 'Average';
+  // Helper backward compatibility
+  getTheoryBestAssessmentCount: (course) => {
+    return marksService.getCourseCTStructure(course).bestCount;
+  },
+
+  // Get full CT matrix row for table view (Section 14 & 16)
+  getCourseCTMatrixRow: (course) => {
+    const structure = marksService.getCourseCTStructure(course);
+    if (!structure.isApplicable) {
+      return {
+        courseId: course.id,
+        courseCode: course.courseId,
+        courseTitle: course.courseTitle,
+        credit: course.credit,
+        courseType: course.courseType,
+        isApplicable: false,
+        message: 'CT marks are not applicable for Sessional/Lab courses.',
+        totalCTs: 0,
+        bestCount: 0,
+        slots: [],
+        completedCount: 0,
+        bestEntries: [],
+        bestValuesFormatted: '—',
+        resultPercentage: null,
+        formattedResult: 'Not Applicable'
+      };
+    }
+
+    const { totalCTs, bestCount } = structure;
+    const rawAssessments = course.assessments || [];
+
+    // Map each CT number slot (1 .. totalCTs)
+    const slots = [];
+    const completedList = [];
+
+    for (let ctNum = 1; ctNum <= totalCTs; ctNum++) {
+      // Find matching CT mark by ctNumber or name
+      const entry = rawAssessments.find(a => {
+        const num = Number(a.ctNumber || a.ct_number || (a.name && (a.name.match(/CT\s*[-–]?\s*(\d+)/i) || [])[1]));
+        return num === ctNum;
+      });
+
+      if (entry && !entry.isMissed && entry.obtainedMarks !== undefined && entry.obtainedMarks !== null) {
+        const obtained = Number(entry.obtainedMarks);
+        const total = Number(entry.totalMarks || 20);
+        slots.push({
+          ctNumber: ctNum,
+          label: `CT ${ctNum}`,
+          entry,
+          isCompleted: true,
+          obtainedMarks: obtained,
+          totalMarks: total,
+          percentage: total > 0 ? (obtained / total) * 100 : 0
+        });
+        completedList.push({
+          ...entry,
+          ctNumber: ctNum,
+          obtainedMarks: obtained,
+          totalMarks: total
+        });
+      } else {
+        slots.push({
+          ctNumber: ctNum,
+          label: `CT ${ctNum}`,
+          entry: entry || null,
+          isCompleted: false,
+          obtainedMarks: null,
+          totalMarks: Number(entry?.totalMarks || 20)
+        });
+      }
+    }
+
+    // Incomplete CT handling: sort completed CTs descending by score
+    const sortedCompleted = [...completedList].sort((a, b) => {
+      // Sort primarily by percentage then by obtained
+      const pctA = (a.obtainedMarks / (a.totalMarks || 20));
+      const pctB = (b.obtainedMarks / (b.totalMarks || 20));
+      return pctB - pctA;
+    });
+
+    const bestEntries = sortedCompleted.slice(0, Math.min(bestCount, sortedCompleted.length));
+    const bestIds = new Set(bestEntries.map(e => e.id));
+
+    let bestObtainedSum = 0;
+    let bestMaxSum = 0;
+    bestEntries.forEach(e => {
+      bestObtainedSum += e.obtainedMarks;
+      bestMaxSum += e.totalMarks;
+    });
+
+    const resultPercentage = bestMaxSum > 0
+      ? Number(((bestObtainedSum / bestMaxSum) * 100).toFixed(1))
+      : null;
+
+    const bestValuesFormatted = bestEntries.length > 0
+      ? bestEntries.map(e => e.obtainedMarks).join(', ')
+      : '—';
+
+    const formattedResult = resultPercentage !== null
+      ? `${resultPercentage}%`
+      : 'Not Taken';
+
+    return {
+      courseId: course.id,
+      courseCode: course.courseId,
+      courseTitle: course.courseTitle,
+      credit: course.credit,
+      courseType: course.courseType,
+      color: course.color,
+      isApplicable: true,
+      totalCTs,
+      bestCount,
+      slots,
+      completedCount: completedList.length,
+      completionText: `Completed: ${completedList.length} / ${totalCTs}`,
+      isFullyCompleted: completedList.length >= bestCount,
+      bestEntries,
+      bestIds,
+      bestObtainedSum,
+      bestMaxSum,
+      bestValuesFormatted,
+      resultPercentage,
+      formattedResult
+    };
+  },
+
+  // Main summary generator for a course card (Section 20)
+  getCourseMarksSummary: (course) => {
+    const matrix = marksService.getCourseCTMatrixRow(course);
+    if (!matrix.isApplicable) {
+      return {
+        isApplicable: false,
+        message: 'CT marks are not applicable for Sessional/Lab courses.',
+        bestCount: 0,
+        totalCTs: 0,
+        currentCount: 0,
+        bestAssessments: [],
+        bestEntryIds: new Set(),
+        obtainedTotal: 0,
+        maxTotal: 0,
+        percentage: 0,
+        performanceStatus: 'Not Applicable'
+      };
+    }
+
+    let performanceStatus = 'Not Started';
+    if (matrix.completedCount > 0) {
+      const pct = matrix.resultPercentage || 0;
+      if (pct >= 85) performanceStatus = 'Excellent';
+      else if (pct >= 70) performanceStatus = 'Good';
+      else if (pct >= 50) performanceStatus = 'Average';
       else performanceStatus = 'Needs Improvement';
     }
 
     return {
       isApplicable: true,
-      bestCount,
-      currentCount: assessments.length,
-      bestAssessments: bestEntries,
-      bestEntryIds,
-      obtainedTotal,
-      maxTotal,
-      remainingMarks,
-      percentage,
+      bestCount: matrix.bestCount,
+      totalCTs: matrix.totalCTs,
+      currentCount: matrix.completedCount,
+      completionText: matrix.completionText,
+      bestAssessments: matrix.bestEntries,
+      bestEntryIds: matrix.bestIds,
+      obtainedTotal: matrix.bestObtainedSum,
+      maxTotal: matrix.bestMaxSum,
+      percentage: matrix.resultPercentage || 0,
       performanceStatus,
-      message: `Best ${bestCount} selected`
+      message: `Best ${matrix.bestCount} of ${matrix.totalCTs}`,
+      formattedResult: matrix.formattedResult
     };
   },
 
-  // Actions for course assessments
-  addAssessmentToCourse: (courseId, assessmentData) => {
+  // Add a CT mark to a course with strict validations (Section 17 & 25)
+  addCTMarkToCourse: (courseId, markData) => {
     const courses = attendanceService.getCourses();
-    const index = courses.findIndex(c => c.id === courseId);
-    if (index !== -1) {
-      const course = courses[index];
-      const newAst = {
-        id: `ast-${Date.now()}`,
-        name: assessmentData.name || 'Class Test',
-        type: assessmentData.type || 'CT',
-        totalMarks: Number(assessmentData.totalMarks || 20),
-        obtainedMarks: assessmentData.isMissed ? 0 : Number(assessmentData.obtainedMarks || 0),
-        expectedMarks: Number(assessmentData.expectedMarks || assessmentData.totalMarks || 20),
-        date: assessmentData.date || new Date().toISOString().split('T')[0],
-        isMissed: Boolean(assessmentData.isMissed),
-        notes: assessmentData.notes || ''
+    const index = courses.findIndex(c => c.id === courseId || c.courseId === courseId);
+    if (index === -1) {
+      return { success: false, error: 'Course not found.' };
+    }
+
+    const course = { ...courses[index] };
+    if (!marksService.isApplicable(course)) {
+      return { success: false, error: 'CT marks cannot be added to Sessional or Lab courses.' };
+    }
+
+    const structure = marksService.getCourseCTStructure(course);
+    const ctNumber = Number(markData.ctNumber);
+
+    if (!Number.isInteger(ctNumber) || ctNumber < 1 || ctNumber > structure.totalCTs) {
+      return {
+        success: false,
+        error: `CT Number must be between 1 and ${structure.totalCTs} for this ${course.credit}-credit course.`
       };
-
-      if (!course.assessments) course.assessments = [];
-      course.assessments.push(newAst);
-      courses[index] = course;
-      attendanceService.saveCourses(courses);
-      return newAst;
     }
-    return null;
+
+    const obtainedMarks = Number(markData.obtainedMarks);
+    const totalMarks = Number(markData.totalMarks || 20);
+
+    if (isNaN(obtainedMarks) || obtainedMarks < 0) {
+      return { success: false, error: 'Obtained marks cannot be negative.' };
+    }
+    if (obtainedMarks > totalMarks) {
+      return { success: false, error: `Obtained marks (${obtainedMarks}) cannot exceed total marks (${totalMarks}).` };
+    }
+
+    if (!course.assessments) course.assessments = [];
+
+    // Duplicate check: do not allow duplicate marks for the same CT number in the same course
+    const duplicate = course.assessments.find(a => {
+      const num = Number(a.ctNumber || a.ct_number || (a.name && (a.name.match(/CT\s*[-–]?\s*(\d+)/i) || [])[1]));
+      return num === ctNumber;
+    });
+
+    if (duplicate) {
+      return {
+        success: false,
+        error: `CT-${ctNumber} already exists for this course. Please edit or delete the existing mark instead.`
+      };
+    }
+
+    const newAst = {
+      id: `ct-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      ctNumber,
+      name: `CT-${ctNumber}`,
+      type: 'CT',
+      totalMarks,
+      obtainedMarks,
+      date: markData.date || new Date().toISOString().split('T')[0],
+      isMissed: false,
+      notes: markData.notes || '',
+      createdAt: new Date().toISOString()
+    };
+
+    course.assessments.push(newAst);
+    courses[index] = course;
+    attendanceService.saveCourses(courses);
+
+    void courseApi.update(course.id, { assessments: course.assessments }).catch(() => {});
+    return { success: true, course, entry: newAst };
   },
 
-  updateAssessmentInCourse: (courseId, assessmentId, updatedData) => {
+  updateCTMarkInCourse: (courseId, markId, updatedData) => {
     const courses = attendanceService.getCourses();
-    const cIndex = courses.findIndex(c => c.id === courseId);
-    if (cIndex !== -1 && courses[cIndex].assessments) {
-      const astIndex = courses[cIndex].assessments.findIndex(a => a.id === assessmentId);
-      if (astIndex !== -1) {
-        const current = courses[cIndex].assessments[astIndex];
-        const updated = {
-          ...current,
-          ...updatedData,
-          totalMarks: Number(updatedData.totalMarks ?? current.totalMarks ?? 20),
-          obtainedMarks: updatedData.isMissed
-            ? 0
-            : Number(updatedData.obtainedMarks ?? current.obtainedMarks ?? 0),
-          isMissed: Boolean(updatedData.isMissed ?? current.isMissed)
-        };
-        courses[cIndex].assessments[astIndex] = updated;
-        attendanceService.saveCourses(courses);
-        return updated;
+    const cIndex = courses.findIndex(c => c.id === courseId || c.courseId === courseId);
+    if (cIndex === -1) return { success: false, error: 'Course not found.' };
+
+    const course = { ...courses[cIndex] };
+    if (!course.assessments) return { success: false, error: 'No assessments found.' };
+
+    const astIndex = course.assessments.findIndex(a => a.id === markId);
+    if (astIndex === -1) return { success: false, error: 'CT mark record not found.' };
+
+    const existing = course.assessments[astIndex];
+    const structure = marksService.getCourseCTStructure(course);
+
+    const ctNumber = Number(updatedData.ctNumber ?? existing.ctNumber);
+    if (!Number.isInteger(ctNumber) || ctNumber < 1 || ctNumber > structure.totalCTs) {
+      return { success: false, error: `CT Number must be between 1 and ${structure.totalCTs}.` };
+    }
+
+    const totalMarks = Number(updatedData.totalMarks ?? existing.totalMarks ?? 20);
+    const obtainedMarks = Number(updatedData.obtainedMarks ?? existing.obtainedMarks ?? 0);
+
+    if (obtainedMarks < 0 || obtainedMarks > totalMarks) {
+      return { success: false, error: 'Obtained marks must be between 0 and total marks.' };
+    }
+
+    // Check duplicate if CT number changed
+    if (ctNumber !== existing.ctNumber) {
+      const duplicate = course.assessments.find(a => a.id !== markId && Number(a.ctNumber) === ctNumber);
+      if (duplicate) {
+        return { success: false, error: `CT-${ctNumber} already exists for this course.` };
       }
     }
-    return null;
+
+    const updated = {
+      ...existing,
+      ctNumber,
+      name: `CT-${ctNumber}`,
+      totalMarks,
+      obtainedMarks,
+      date: updatedData.date || existing.date,
+      notes: updatedData.notes !== undefined ? updatedData.notes : existing.notes,
+      updatedAt: new Date().toISOString()
+    };
+
+    course.assessments[astIndex] = updated;
+    courses[cIndex] = course;
+    attendanceService.saveCourses(courses);
+
+    void courseApi.update(course.id, { assessments: course.assessments }).catch(() => {});
+    return { success: true, course, entry: updated };
   },
 
-  deleteAssessmentFromCourse: (courseId, assessmentId) => {
+  deleteCTMarkFromCourse: (courseId, markId) => {
     const courses = attendanceService.getCourses();
-    const cIndex = courses.findIndex(c => c.id === courseId);
-    if (cIndex !== -1 && courses[cIndex].assessments) {
-      courses[cIndex].assessments = courses[cIndex].assessments.filter(a => a.id !== assessmentId);
-      attendanceService.saveCourses(courses);
-      return true;
-    }
-    return false;
+    const cIndex = courses.findIndex(c => c.id === courseId || c.courseId === courseId);
+    if (cIndex === -1) return false;
+
+    const course = { ...courses[cIndex] };
+    if (!course.assessments) return false;
+
+    course.assessments = course.assessments.filter(a => a.id !== markId);
+    courses[cIndex] = course;
+    attendanceService.saveCourses(courses);
+
+    void courseApi.update(course.id, { assessments: course.assessments }).catch(() => {});
+    return true;
   },
 
-  toggleAssessmentMissed: (courseId, assessmentId) => {
-    const courses = attendanceService.getCourses();
-    const cIndex = courses.findIndex(c => c.id === courseId);
-    if (cIndex !== -1 && courses[cIndex].assessments) {
-      const astIndex = courses[cIndex].assessments.findIndex(a => a.id === assessmentId);
-      if (astIndex !== -1) {
-        const current = courses[cIndex].assessments[astIndex];
-        const newMissedState = !current.isMissed;
-        courses[cIndex].assessments[astIndex] = {
-          ...current,
-          isMissed: newMissedState,
-          obtainedMarks: newMissedState ? 0 : current.obtainedMarks
-        };
-        attendanceService.saveCourses(courses);
-        return courses[cIndex].assessments[astIndex];
-      }
-    }
-    return null;
+  // Backward compatibility alias
+  addAssessmentToCourse: (courseId, data) => {
+    return marksService.addCTMarkToCourse(courseId, data);
+  },
+  updateAssessmentInCourse: (courseId, id, data) => {
+    return marksService.updateCTMarkInCourse(courseId, id, data);
+  },
+  deleteAssessmentFromCourse: (courseId, id) => {
+    return marksService.deleteCTMarkFromCourse(courseId, id);
   }
 };

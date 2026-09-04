@@ -203,18 +203,14 @@ class CourseSerializer(UserOwnedModelSerializer):
         attrs = super().validate(attrs)
         course_type = attrs.get('course_type', getattr(self.instance, 'course_type', 'theory'))
         credit = attrs.get('credit', getattr(self.instance, 'credit', 0))
-        if course_type == Course.CourseType.THEORY and credit not in (2, 3):
-            raise serializers.ValidationError({'credit': 'Theory courses must have 2.00 or 3.00 credits.'})
-        if course_type in (Course.CourseType.LAB, Course.CourseType.SESSIONAL) and credit not in (0.75, 1.5):
-            raise serializers.ValidationError(
-                {'credit': 'Lab and sessional courses must have 0.75 or 1.50 credits.'}
-            )
+        if credit <= 0:
+            raise serializers.ValidationError({'credit': 'Course credit must be greater than 0.'})
         if course_type != Course.CourseType.THEORY:
             attrs['assessment_applicable'] = False
             attrs['best_assessment_count'] = 0
         else:
             attrs.setdefault('assessment_applicable', True)
-            attrs.setdefault('best_assessment_count', 2 if credit == 2 else 3)
+            attrs['best_assessment_count'] = int(credit)
         return attrs
 
     @transaction.atomic
