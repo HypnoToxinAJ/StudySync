@@ -59,7 +59,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'createdAt',
             'updatedAt',
         ]
-        read_only_fields = ['provider', 'onboarded']
+        read_only_fields = ['provider']
 
     @staticmethod
     def get_isLoggedIn(_obj):
@@ -76,6 +76,7 @@ class SyncRequestSerializer(serializers.Serializer):
         child=SyncDocumentInputSerializer(),
         allow_empty=True,
     )
+    force = serializers.BooleanField(required=False, default=False)
 
     def validate_documents(self, value):
         max_documents = self.context['max_documents']

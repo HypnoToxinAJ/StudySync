@@ -17,6 +17,8 @@ export const OnboardingModal = ({ isOpen, onClose }) => {
     academicGoals: user?.academicGoals || 'Maintain GPA > 3.80 & build portfolio projects.',
   });
 
+  const [submitting, setSubmitting] = useState(false);
+
   const toggleDay = (day) => {
     if (form.weeklyClassDays.includes(day)) {
       setForm({ ...form, weeklyClassDays: form.weeklyClassDays.filter(d => d !== day) });
@@ -25,10 +27,18 @@ export const OnboardingModal = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    completeOnboarding(form);
-    if (onClose) onClose();
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await completeOnboarding(form);
+      if (onClose) onClose();
+    } catch (err) {
+      console.error('Failed to complete onboarding:', err);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -138,9 +148,10 @@ export const OnboardingModal = ({ isOpen, onClose }) => {
         <div className="pt-2 flex justify-end">
           <button
             type="submit"
-            className="w-full sm:w-auto px-8 py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold text-xs rounded-xl shadow-lg shadow-brand-600/30 transition-all flex items-center justify-center space-x-2"
+            disabled={submitting}
+            className="w-full sm:w-auto px-8 py-3 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold text-xs rounded-xl shadow-lg shadow-brand-600/30 transition-all flex items-center justify-center space-x-2"
           >
-            <span>Complete Setup & Launch Workspace</span>
+            <span>{submitting ? 'Setting up Workspace...' : 'Complete Setup & Launch Workspace'}</span>
             <CheckCircle2 className="w-4 h-4" />
           </button>
         </div>

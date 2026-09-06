@@ -1,177 +1,126 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { cuetResultService } from '../services/cuetResultService';
 import { storageService } from '../../../services/storageService';
+import { apiClient } from '../../../services/apiClient';
+import { useAuth } from '../../../context/AuthContext';
 import { useToast } from '../../../context/ToastContext';
 
 export const useCuetResults = () => {
   const { showToast } = useToast();
 
+  let authUser = null;
+  try {
+    const auth = useAuth();
+    authUser = auth?.user;
+  } catch {
+    // Graceful fallback if context is not mounted
+  }
+
   const [resultData, setResultData] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [diagnostics, setDiagnostics] = useState(null);
   const [isCached, setIsCached] = useState(false);
-  const [rememberedStudentId, setRememberedStudentId] = useState('');
-  const [captchaChallenge, setCaptchaChallenge] = useState(null);
 
-  const abortControllerRef = useRef(null);
-
-  // Initialize from local storage on mount
+  // Initialize from local storage on mount, then reconcile with backend database
   useEffect(() => {
-    // 1. Load remembered Student ID if saved with consent
-    const savedId = storageService.get(storageService.KEYS.REMEMBERED_STUDENT_ID, '');
-    if (savedId) {
-      setRememberedStudentId(savedId);
-    }
-
-    // 2. Load saved normalized result copy if user opted in
+    // 1. Fast synchronous load from local cache to prevent layout flicker
     const savedResults = storageService.get(storageService.KEYS.CUET_RESULTS, null);
     if (savedResults && savedResults.semesters && savedResults.overall) {
       setResultData({ ...savedResults, isSavedCopy: true });
       setIsCached(true);
     }
-  }, []);
 
-  /**
-   * Safely archives legacy manual semesters if present before replacing with official results
-   */
-  const archiveManualSemestersIfNeeded = useCallback(() => {
-    const manualSemesters = storageService.get(storageService.KEYS.SEMESTERS, []);
-    if (manualSemesters && manualSemesters.length > 0) {
-      const existingArchive = storageService.get(storageService.KEYS.MANUAL_SEMESTERS_ARCHIVE, null);
-      if (!existingArchive) {
-        storageService.set(storageService.KEYS.MANUAL_SEMESTERS_ARCHIVE, {
-          semesters: manualSemesters,
-          archivedAt: new Date().toISOString()
+    // 2. Asynchronously reconcile with backend database if user is authenticated
+    if (apiClient.hasSession()) {
+      cuetResultService.getSavedResults()
+        .then(backendData => {
+          if (backendData && backendData.semesters && backendData.overall) {
+            setResultData({ ...backendData, isSavedCopy: true });
+            setIsCached(true);
+            storageService.set(storageService.KEYS.CUET_RESULTS, backendData);
+          } else if (!backendData && savedResults && savedResults.semesters && savedResults.overall) {
+            // Local copy exists but backend has no record yet -> sync to backend
+            cuetResultService.saveResultsToBackend(savedResults).catch(err => {
+              console.warn('Background sync of cached results to backend failed:', err);
+            });
+          }
+        })
+        .catch(err => {
+          console.warn('Failed to load academic results from backend:', err);
         });
-      }
     }
-  }, []);
+  }, [authUser?.id]);
 
   /**
-   * Fetches official results from CUET Result Portal via secure proxy
+   * Imports results by parsing raw HTML content from CUET result portal.
+   * 100% Zero password needed.
    */
-  const fetchOfficialResults = useCallback(async ({
-    studentId,
-    password,
-    rememberStudentId = false,
-    saveLocally = true
-  }) => {
-    if (!studentId || !password) {
-      setError('Please provide both Student ID and Password.');
-      return;
-    }
-
-    // Cancel any ongoing fetch
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    abortControllerRef.current = new AbortController();
-
+  const importFromHtml = useCallback(async (rawHtml, studentFallback = {}) => {
     setIsLoading(true);
     setError(null);
+    setDiagnostics(null);
 
     try {
-      // 1. Remember student ID if user explicitly consented
-      if (rememberStudentId) {
-        storageService.set(storageService.KEYS.REMEMBERED_STUDENT_ID, studentId.trim());
-        setRememberedStudentId(studentId.trim());
-      } else {
-        localStorage.removeItem(storageService.KEYS.REMEMBERED_STUDENT_ID);
-        setRememberedStudentId('');
-      }
+      const fallback = {
+        studentId: studentFallback.studentId || authUser?.studentId || '',
+        name: studentFallback.name || authUser?.name || '',
+        department: studentFallback.department || authUser?.department || ''
+      };
 
-      // 2. Archive manual entries safely
-      archiveManualSemestersIfNeeded();
+      const normalized = await cuetResultService.importFromHtml(rawHtml, fallback);
 
-      // 3. Open a short-lived CAPTCHA challenge. The password stays in the proxy session.
-      const challenge = await cuetResultService.startFetch(
-        { studentId: studentId.trim(), password },
-        abortControllerRef.current.signal
-      );
-      setCaptchaChallenge({
-        ...challenge,
-        studentId: studentId.trim(),
-        saveLocally,
-        rememberStudentId
-      });
+      setResultData(normalized);
+      setIsCached(true);
+      storageService.set(storageService.KEYS.CUET_RESULTS, normalized);
+      showToast('Official results successfully imported and saved to database!', 'success');
+      return normalized;
     } catch (err) {
-      if (err.message !== 'Request was cancelled.') {
-        setError(err.message || 'Unable to open the CUET CAPTCHA challenge.');
-        showToast(err.message || 'Unable to open the CUET CAPTCHA challenge.', 'error');
-      }
+      const diag = cuetResultService.diagnoseHtml(rawHtml);
+      setDiagnostics(diag);
+      const msg = err.message || 'Failed to parse CUET result page. Please review the diagnostic report.';
+      setError(msg);
+      showToast(msg, 'error');
+      throw err;
     } finally {
       setIsLoading(false);
     }
-  }, [archiveManualSemestersIfNeeded, showToast]);
+  }, [authUser, showToast]);
 
-  const completeCaptchaChallenge = useCallback(async (captcha) => {
-    if (!captchaChallenge?.challengeId || !captcha.trim()) return;
-
-    if (abortControllerRef.current) abortControllerRef.current.abort();
-    abortControllerRef.current = new AbortController();
+  /**
+   * Clears official results from state, local cache, and permanently deletes from the backend database
+   */
+  const clearResults = useCallback(async () => {
     setIsLoading(true);
-    setError(null);
-
     try {
-      const data = await cuetResultService.completeFetch(
-        { challengeId: captchaChallenge.challengeId, captcha },
-        abortControllerRef.current.signal
-      );
-
-      if (captchaChallenge.saveLocally) {
-        storageService.set(storageService.KEYS.CUET_RESULTS, data);
-      } else {
-        localStorage.removeItem(storageService.KEYS.CUET_RESULTS);
+      // 1. Delete from backend database if user is authenticated
+      if (apiClient.hasSession()) {
+        await cuetResultService.deleteResultsFromBackend();
       }
 
-      setResultData(data);
+      // 2. Clear local storage cache and in-memory state
+      localStorage.removeItem(storageService.KEYS.CUET_RESULTS);
+      setResultData(null);
       setIsCached(false);
-      setCaptchaChallenge(null);
-      showToast(`Official CUET results imported for ${data.student.name || data.student.studentId}!`, 'success');
+      setDiagnostics(null);
+      setError(null);
+
+      showToast('Academic results permanently deleted from database and local storage.', 'info');
     } catch (err) {
-      if (err.message !== 'Request was cancelled.') {
-        setError(err.message || 'An unexpected error occurred during CAPTCHA verification.');
-        showToast(err.message || 'CAPTCHA verification failed.', 'error');
-      }
+      console.error('Failed to delete academic results from database:', err);
+      showToast('Failed to delete results from database: ' + (err.message || 'Server error'), 'error');
     } finally {
       setIsLoading(false);
-      // Ensure password reference in caller is cleared immediately
     }
-  }, [captchaChallenge, showToast]);
-
-  /**
-   * Clears imported and saved result copy
-   */
-  const clearResults = useCallback(() => {
-    localStorage.removeItem(storageService.KEYS.CUET_RESULTS);
-    setResultData(null);
-    setIsCached(false);
-    setError(null);
-    showToast('Imported CUET results cleared.', 'info');
   }, [showToast]);
-
-  /**
-   * Loads verified demonstration / test dataset
-   */
-  const loadDemoResults = useCallback((studentId = '1904055') => {
-    archiveManualSemestersIfNeeded();
-    const demoData = cuetResultService.getDemoCuetResults(studentId);
-    setResultData(demoData);
-    setIsCached(false);
-    setError(null);
-    showToast('Loaded verified CUET test dataset.', 'info');
-  }, [archiveManualSemestersIfNeeded, showToast]);
 
   return {
     resultData,
     isLoading,
     error,
-    captchaChallenge,
+    diagnostics,
     isCached,
-    rememberedStudentId,
-    fetchOfficialResults,
-    completeCaptchaChallenge,
-    clearResults,
-    loadDemoResults
+    importFromHtml,
+    clearResults
   };
 };

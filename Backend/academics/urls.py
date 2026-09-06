@@ -1,6 +1,8 @@
 from django.urls import path
 
 from .views import (
+    AcademicResultImportView,
+    AcademicResultView,
     CourseDetailView,
     CourseListCreateView,
     GoogleCalendarStatusView,
@@ -19,6 +21,8 @@ urlpatterns = [
     path('routines/clear/', RoutineClearView.as_view(), name='routine-clear'),
     path('routines/import-image/', RoutineImageImportView.as_view(), name='routine-import-image'),
     path('routines/<str:pk>/', RoutineDetailView.as_view(), name='routine-detail'),
+    path('results/', AcademicResultView.as_view(), name='academic-results'),
+    path('results/import/', AcademicResultImportView.as_view(), name='academic-results-import'),
     path('calendar/status/', GoogleCalendarStatusView.as_view(), name='google-calendar-status'),
     path('calendar/sync/', GoogleCalendarSyncView.as_view(), name='google-calendar-sync'),
 ]

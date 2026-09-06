@@ -1,27 +1,32 @@
-import React from 'react';
-import { GraduationCap, ArrowLeft, RefreshCw } from 'lucide-react';
+import React, { useState } from 'react';
+import { GraduationCap } from 'lucide-react';
 import { useCuetResults } from '../features/cgpa/hooks/useCuetResults';
 import { CuetResultConnectCard } from '../features/cgpa/components/CuetResultConnectCard';
 import { ResultSyncStatus } from '../features/cgpa/components/ResultSyncStatus';
 import { CgpaAnalytics } from '../features/cgpa/components/CgpaAnalytics';
 import { ReadOnlySemesterCard } from '../features/cgpa/components/ReadOnlySemesterCard';
 import { TargetCgpaPredictor } from '../features/cgpa/components/TargetCgpaPredictor';
+import { Modal } from '../components/common/Modal';
 
 export const CGPAPage = () => {
   const {
     resultData,
     isLoading,
     error,
-    captchaChallenge,
+    diagnostics,
     isCached,
-    rememberedStudentId,
-    fetchOfficialResults,
-    completeCaptchaChallenge,
-    clearResults,
-    loadDemoResults
+    importFromHtml,
+    clearResults
   } = useCuetResults();
 
+  const [isReimportModalOpen, setIsReimportModalOpen] = useState(false);
+
   const hasResults = Boolean(resultData && resultData.semesters && resultData.semesters.length > 0);
+
+  const handleImportHtmlAndClose = async (html) => {
+    await importFromHtml(html);
+    setIsReimportModalOpen(false);
+  };
 
   return (
     <div className="space-y-8 animate-fadeIn">
@@ -35,22 +40,19 @@ export const CGPAPage = () => {
             <span>CUET CGPA Calculator & Academic Analytics</span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Official CUET semester results, verified grade point analytics, and next-semester target predictor
+            Official CUET semester results, verified grade point analytics, What-If simulator, and next-semester target predictor
           </p>
         </div>
       </div>
 
-      {/* STATE 1: NO RESULTS IMPORTED -> SHOW CONNECTION FORM */}
+      {/* STATE 1: NO RESULTS IMPORTED -> SHOW HTML IMPORT CARD */}
       {!hasResults && (
         <div className="space-y-8">
           <CuetResultConnectCard
-            onFetch={fetchOfficialResults}
-            onLoadDemo={loadDemoResults}
+            onImportHtml={importFromHtml}
             isLoading={isLoading}
             error={error}
-            captchaChallenge={captchaChallenge}
-            onCompleteCaptcha={completeCaptchaChallenge}
-            initialStudentId={rememberedStudentId}
+            diagnostics={diagnostics}
           />
         </div>
       )}
@@ -64,12 +66,12 @@ export const CGPAPage = () => {
             fetchedAt={resultData.fetchedAt}
             isSavedCopy={isCached || resultData.isSavedCopy}
             source={resultData.source}
-            onRefresh={fetchOfficialResults}
+            onOpenImport={() => setIsReimportModalOpen(true)}
             onClear={clearResults}
             isLoading={isLoading}
           />
 
-          {/* Core Analytics & Progression Trend Charts */}
+          {/* Core Analytics, Charts & Interactive What-If Simulator */}
           <CgpaAnalytics
             semesters={resultData.semesters}
             overall={resultData.overall}
@@ -100,13 +102,29 @@ export const CGPAPage = () => {
                 <ReadOnlySemesterCard
                   key={sem.id || `sem-${idx}`}
                   semester={sem}
-                  defaultExpanded={idx === resultData.semesters.length - 1} // latest expanded by default
+                  defaultExpanded={idx === resultData.semesters.length - 1}
                 />
               ))}
             </div>
           </div>
         </div>
       )}
+
+      {/* RE-IMPORT MODAL */}
+      <Modal
+        isOpen={isReimportModalOpen}
+        onClose={() => setIsReimportModalOpen(false)}
+        title="Update / Re-import CUET Academic Results"
+      >
+        <div className="p-2">
+          <CuetResultConnectCard
+            onImportHtml={handleImportHtmlAndClose}
+            isLoading={isLoading}
+            error={error}
+            diagnostics={diagnostics}
+          />
+        </div>
+      </Modal>
     </div>
   );
 };

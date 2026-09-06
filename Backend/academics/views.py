@@ -6,9 +6,10 @@ import urllib.error
 import urllib.request
 import uuid
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
+from django.utils import timezone
 from django.db import transaction
 from django.db.models import Case, IntegerField, Value, When
 from google.genai import errors as genai_errors
@@ -19,8 +20,19 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .gemini_routine import extract_schedule
-from .models import Course, Routine, RoutineImport
-from .serializers import CourseSerializer, RoutineSerializer
+from .models import (
+    AcademicResult,
+    Course,
+    Routine,
+    RoutineImport,
+    Semester,
+    SemesterCourse,
+)
+from .serializers import (
+    AcademicResultSerializer,
+    CourseSerializer,
+    RoutineSerializer,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -144,6 +156,31 @@ class CourseListCreateView(generics.ListCreateAPIView):
             .order_by('course_id')
         )
 
+    def create(self, request, *args, **kwargs):
+        course_id = request.data.get('courseId') or request.data.get('course_id')
+        custom_id = request.data.get('id')
+        semester = request.data.get('semester', '')
+        existing = None
+        if custom_id:
+            existing = Course.objects.filter(user=request.user, id=custom_id).first()
+        if not existing and course_id:
+            existing = (
+                Course.objects.filter(
+                    user=request.user, course_id__iexact=course_id, semester=semester
+                ).first()
+                or Course.objects.filter(
+                    user=request.user, course_id__iexact=course_id
+                ).first()
+            )
+
+        if existing:
+            serializer = self.get_serializer(existing, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return super().create(request, *args, **kwargs)
+
 
 class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CourseSerializer
@@ -151,20 +188,189 @@ class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         return Course.objects.filter(user=self.request.user).prefetch_related('history', 'assessments')
 
+    def get_object(self):
+        import re
+        from django.db.models import Q
+        queryset = self.get_queryset()
+        pk = self.kwargs.get('pk')
+        payload_code = None
+        if hasattr(self.request, 'data') and isinstance(self.request.data, dict):
+            payload_code = self.request.data.get('courseId') or self.request.data.get('course_id')
+
+        # 1. Direct match on ID or course_id
+        q = Q(id=pk) | Q(course_id__iexact=pk)
+        if payload_code:
+            q |= Q(course_id__iexact=payload_code)
+        obj = queryset.filter(q).first()
+
+        # 2. Fuzzy code match if PK is a composite frontend ID (e.g. course-timestamp-CSE311)
+        if obj is None and pk:
+            clean_pk = re.sub(r'[^A-Za-z0-9]', '', str(pk)).upper()
+            for candidate in queryset:
+                clean_candidate = re.sub(r'[^A-Za-z0-9]', '', candidate.course_id).upper()
+                if clean_candidate and (clean_candidate in clean_pk or clean_pk.endswith(clean_candidate)):
+                    obj = candidate
+                    break
+
+        if obj is None:
+            if self.request.method in ('PUT', 'PATCH'):
+                data = self.request.data.copy()
+                data.setdefault('id', pk)
+                derived_code = payload_code or (pk.split('-')[-1] if '-' in str(pk) else pk)
+                data.setdefault('courseId', derived_code)
+                data.setdefault('courseTitle', data.get('courseId', 'Untitled Course'))
+                data.setdefault('credit', 3)
+                data.setdefault('courseType', 'theory')
+                serializer = self.get_serializer(data=data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                return serializer.save()
+            from django.http import Http404
+            raise Http404('No Course matches the given query.')
+        self.check_object_permissions(self.request, obj)
+        return obj
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        from .models import AttendanceRecord, CourseAssessment, AssessmentEvent, Routine
+        from django.db.models import Q
+        user = self.request.user
+        course_id = instance.course_id
+
+        # 1. Delete associated AttendanceRecord entries
+        AttendanceRecord.objects.filter(
+            Q(course=instance) | Q(user=user, course__course_id__iexact=course_id)
+        ).delete()
+
+        # 2. Delete associated CourseAssessment entries (CT marks)
+        CourseAssessment.objects.filter(
+            Q(course=instance) | Q(user=user, course__course_id__iexact=course_id)
+        ).delete()
+
+        # 3. Delete associated AssessmentEvents
+        AssessmentEvent.objects.filter(user=user).filter(
+            Q(course=instance) | Q(course_code__iexact=course_id)
+        ).delete()
+
+        # 4. Delete associated Routine entries for this course
+        Routine.objects.filter(user=user).filter(
+            Q(course=instance) | Q(course_code__iexact=course_id)
+        ).delete()
+
+        # 5. Delete the course instance itself
+        instance.delete()
+
+        # 6. Clean SyncDocuments
+        try:
+            from core.models import SyncDocument
+            c_doc = SyncDocument.objects.filter(user=user, key='studysync_courses').first()
+            if c_doc and isinstance(c_doc.data, list):
+                c_doc.data = [
+                    c for c in c_doc.data
+                    if str(c.get('id', '')) != str(instance.id)
+                    and str(c.get('courseId', '')).strip().upper() != course_id.strip().upper()
+                ]
+                c_doc.save(update_fields=['data', 'updated_at'])
+
+            a_doc = SyncDocument.objects.filter(user=user, key='studysync_assessments').first()
+            if a_doc and isinstance(a_doc.data, list):
+                a_doc.data = [
+                    a for a in a_doc.data
+                    if str(a.get('courseId', '')).strip().upper() != course_id.strip().upper()
+                    and str(a.get('courseCode', '')).strip().upper() != course_id.strip().upper()
+                ]
+                a_doc.save(update_fields=['data', 'updated_at'])
+
+            r_doc = SyncDocument.objects.filter(user=user, key='studysync_routines').first()
+            if r_doc and isinstance(r_doc.data, list):
+                r_doc.data = [
+                    r for r in r_doc.data
+                    if str(r.get('courseId', '')).strip().upper() != course_id.strip().upper()
+                    and str(r.get('course_code', '')).strip().upper() != course_id.strip().upper()
+                ]
+                r_doc.save(update_fields=['data', 'updated_at'])
+        except Exception as e:
+            logger.warning('Failed to clean SyncDocument during Course deletion: %s', e)
+
+    def delete(self, request, *args, **kwargs):
+        pk = self.kwargs.get('pk')
+        try:
+            return super().delete(request, *args, **kwargs)
+        except Exception as e:
+            logger.info('Course %s not found in table during delete, cleaning SyncDocuments: %s', pk, e)
+            # If already removed from table, ensure it is cleaned from SyncDocuments
+            try:
+                from core.models import SyncDocument
+                clean_pk = re.sub(r'[^A-Za-z0-9]', '', str(pk)).upper()
+                for key in ['studysync_courses', 'studysync_assessments', 'studysync_routines']:
+                    doc = SyncDocument.objects.filter(user=request.user, key=key).first()
+                    if doc and isinstance(doc.data, list):
+                        doc.data = [
+                            item for item in doc.data
+                            if str(item.get('id', '')) != str(pk)
+                            and re.sub(r'[^A-Za-z0-9]', '', str(item.get('courseId') or item.get('course_code') or '')).upper() not in clean_pk
+                        ]
+                        doc.save(update_fields=['data', 'updated_at'])
+            except Exception:
+                pass
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
 
 class RoutineClearView(APIView):
-    """Clear all routine records for the authenticated user."""
+    """Clear all routine records and associated attendance & CT marks for the authenticated user."""
 
     def delete(self, request):
+        from .models import AttendanceRecord, CourseAssessment, AssessmentEvent
         with transaction.atomic():
             deleted_routines, _ = Routine.objects.filter(user=request.user).delete()
             deleted_imports, _ = RoutineImport.objects.filter(user=request.user).delete()
+            deleted_attendance, _ = AttendanceRecord.objects.filter(user=request.user).delete()
+            deleted_assessments, _ = CourseAssessment.objects.filter(user=request.user).delete()
+            deleted_events, _ = AssessmentEvent.objects.filter(user=request.user).delete()
+            updated_courses = Course.objects.filter(user=request.user).update(
+                missed_classes=0,
+                total_classes=0,
+                attended_classes=0,
+            )
+            # Also clear and normalize the sync documents if present
+            try:
+                from core.models import SyncDocument
+                SyncDocument.objects.filter(
+                    user=request.user,
+                    key__in=['studysync_routines', 'studysync_routine_imports', 'studysync_assessments']
+                ).update(data=[])
+                courses_doc = SyncDocument.objects.filter(user=request.user, key='studysync_courses').first()
+                if courses_doc and isinstance(courses_doc.data, list):
+                    cleared_courses = []
+                    for c in courses_doc.data:
+                        c_copy = dict(c)
+                        c_copy['totalClasses'] = 0
+                        c_copy['attendedClasses'] = 0
+                        c_copy['missedClasses'] = 0
+                        c_copy['history'] = []
+                        c_copy['assessments'] = []
+                        c_type = str(c_copy.get('courseType') or '').upper()
+                        is_th = 'LAB' not in c_type and 'SESSIONAL' not in c_type
+                        c_copy['assessmentApplicable'] = is_th
+                        cr = float(c_copy.get('credit') or 3.0)
+                        c_copy['bestAssessmentCount'] = max(1, int(round(cr))) if is_th else 0
+                        cleared_courses.append(c_copy)
+                    courses_doc.data = cleared_courses
+                    courses_doc.save(update_fields=['data', 'updated_at'])
+            except Exception as e:
+                logger.warning('Failed to reset SyncDocument during RoutineClearView: %s', e)
         return Response(
             {
                 'success': True,
                 'deletedCount': deleted_routines,
                 'deletedImports': deleted_imports,
-                'message': f'Successfully cleared {deleted_routines} routine records.',
+                'deletedAttendance': deleted_attendance,
+                'deletedAssessments': deleted_assessments,
+                'deletedEvents': deleted_events,
+                'resetCourses': updated_courses,
+                'message': (
+                    f'Successfully cleared {deleted_routines} routine records, '
+                    f'{deleted_attendance} attendance entries, and {deleted_assessments} CT marks.'
+                ),
             },
             status=status.HTTP_200_OK,
         )
@@ -230,6 +436,31 @@ class RoutineImageImportView(APIView):
         import_id = f'gemini-{uuid.uuid4().hex}'
         seen = set()
         records = []
+        course_map = {}
+
+        for item in extracted:
+            code = item.course_code.upper()
+            if code not in course_map:
+                c_type = infer_class_type(f'{code} {item.course_title}')
+                is_theory = (c_type == Routine.ClassType.THEORY)
+                credit_val = Decimal(item.credit)
+                course, _ = Course.objects.get_or_create(
+                    user=request.user,
+                    course_id=code,
+                    defaults={
+                        'course_title': item.course_title,
+                        'credit': credit_val,
+                        'course_type': 'lab' if c_type == Routine.ClassType.LAB else c_type,
+                        'faculty': item.teacher_name,
+                        'color': color_for_course(code),
+                        'assessment_applicable': is_theory,
+                        'best_assessment_count': max(1, int(round(float(credit_val)))) if is_theory else 0,
+                        'source': Course.Source.OCR_IMPORT,
+                        'import_id': import_id,
+                    },
+                )
+                course_map[code] = course
+
         for item in extracted:
             signature = (
                 item.day_of_week,
@@ -246,6 +477,7 @@ class RoutineImageImportView(APIView):
             records.append(
                 Routine(
                     user=request.user,
+                    course=course_map.get(course_code),
                     course_code=course_code,
                     course_title=item.course_title,
                     faculty=item.teacher_name,
@@ -464,3 +696,342 @@ class GoogleCalendarSyncView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class AcademicResultView(APIView):
+    """
+    Retrieve, create/update, or clear the authenticated student's academic result.
+    """
+
+    def get(self, request):
+        result = (
+            AcademicResult.objects.filter(user=request.user)
+            .prefetch_related('semesters__courses')
+            .first()
+        )
+        if not result:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        serializer = AcademicResultSerializer(result)
+        return Response(serializer.data)
+
+    def post(self, request):
+        result = (
+            AcademicResult.objects.filter(user=request.user)
+            .prefetch_related('semesters__courses')
+            .first()
+        )
+        if result:
+            serializer = AcademicResultSerializer(
+                result, data=request.data, context={'request': request}
+            )
+        else:
+            serializer = AcademicResultSerializer(
+                data=request.data, context={'request': request}
+            )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        # Keep SyncDocument in sync for local-first sync store
+        try:
+            from django.core.serializers.json import DjangoJSONEncoder
+            from core.models import SyncDocument
+            json_safe_data = json.loads(json.dumps(serializer.data, cls=DjangoJSONEncoder))
+            doc, _ = SyncDocument.objects.get_or_create(
+                user=request.user,
+                key='studysync_cuet_results',
+                defaults={'data': json_safe_data, 'revision': 1},
+            )
+            doc.data = json_safe_data
+            doc.save(update_fields=['data', 'updated_at'])
+        except Exception as e:
+            logger.warning('Failed to update SyncDocument for cuet_results: %s', e)
+
+        return Response(
+            serializer.data,
+            status=status.HTTP_200_OK if result else status.HTTP_201_CREATED,
+        )
+
+    def delete(self, request):
+        with transaction.atomic():
+            SemesterCourse.objects.filter(user=request.user).delete()
+            Semester.objects.filter(user=request.user).delete()
+            AcademicResult.objects.filter(user=request.user).delete()
+            try:
+                from core.models import SyncDocument
+                SyncDocument.objects.filter(
+                    user=request.user, key='studysync_cuet_results'
+                ).delete()
+            except Exception as e:
+                logger.warning('Failed to delete SyncDocument for cuet_results: %s', e)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AcademicResultImportView(APIView):
+    """
+    Import raw or normalized CUET academic results from browser extension,
+    Tampermonkey userscript, or direct JSON/HTML paste.
+    Performs authoritative repeated-course resolution, failed course deduplication,
+    credit totals and CGPA calculation, and persists to Supabase PostgreSQL.
+    """
+
+    CUET_GRADE_SCALE = {
+        'A+': Decimal('4.00'),
+        'A': Decimal('3.75'),
+        'A-': Decimal('3.50'),
+        'B+': Decimal('3.25'),
+        'B': Decimal('3.00'),
+        'B-': Decimal('2.75'),
+        'C+': Decimal('2.50'),
+        'C': Decimal('2.25'),
+        'D': Decimal('2.00'),
+        'F': Decimal('0.00'),
+    }
+
+    ROMAN_MAP = {'I': 1, 'II': 2, 'III': 3, 'IV': 4, '1': 1, '2': 2, '3': 3, '4': 4}
+    NUM_TO_ROMAN = {1: 'I', 2: 'II', 3: 'III', 4: 'IV'}
+
+    @classmethod
+    def _parse_term(cls, term_str):
+        if not term_str:
+            return 1, 1, 'Level 1 - Term I'
+        m = re.search(r'Level\s*(\d+)\s*[-–]?\s*Term\s*([IVX]+|\d+)', term_str, re.I) or \
+            re.search(r'L\s*[-–]?\s*(\d+)\s*T\s*[-–]?\s*([IVX]+|\d+)', term_str, re.I) or \
+            re.search(r'(\d+)(?:st|nd|rd|th)?\s*Year\s*(\d+)(?:st|nd|rd|th)?\s*Term', term_str, re.I)
+        if m:
+            level = int(m.group(1))
+            raw_term = m.group(2).upper()
+            term = cls.ROMAN_MAP.get(raw_term, 1)
+            roman = cls.NUM_TO_ROMAN.get(term, 'I')
+            return level, term, f'Level {level} - Term {roman}'
+        return 1, 1, term_str.strip() or 'Level 1 - Term I'
+
+    @transaction.atomic
+    def post(self, request):
+        data = request.data
+        if not isinstance(data, dict):
+            return Response({'error': 'Invalid payload. Expected JSON object.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 1. Check if already wrapped in full normalized structure or if passing results array
+        raw_courses = data.get('results') or data.get('courses')
+        student_meta = data.get('student', {})
+
+        if not raw_courses and isinstance(data.get('semesters'), list):
+            existing = AcademicResult.objects.filter(user=request.user).first()
+            serializer = AcademicResultSerializer(
+                existing, data=data, context={'request': request}
+            ) if existing else AcademicResultSerializer(
+                data=data, context={'request': request}
+            )
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED)
+
+        if not raw_courses or not isinstance(raw_courses, list):
+            return Response({'error': 'No course records provided in results array.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Track attempts for repeated course resolution
+        course_occurrences = {}
+        for item in raw_courses:
+            code = str(item.get('course_code') or item.get('courseCode') or item.get('course_id') or item.get('courseId') or '').strip().upper()
+            if not code:
+                continue
+            grade = str(item.get('grade') or item.get('letterGrade') or '').strip().upper().replace(' ', '')
+            if grade not in self.CUET_GRADE_SCALE:
+                continue
+            course_occurrences.setdefault(code, []).append(grade)
+
+        # Determine latest / effective grade for each course code
+        latest_grade_map = {}
+        for code, grades in course_occurrences.items():
+            non_f_grades = [g for g in grades if g != 'F']
+            latest_grade_map[code] = non_f_grades[-1] if non_f_grades else grades[-1]
+
+        # 3. Group and structure into semesters
+        terms_map = {}
+        course_seen_counts = {}
+
+        for item in raw_courses:
+            code = str(item.get('course_code') or item.get('courseCode') or item.get('course_id') or item.get('courseId') or '').strip().upper()
+            title = str(item.get('course_title') or item.get('courseTitle') or item.get('title') or code).strip()
+            raw_credit = item.get('credit') or item.get('credits') or 3.0
+            try:
+                credit = Decimal(str(raw_credit))
+            except Exception:
+                credit = Decimal('3.00')
+
+            grade = str(item.get('grade') or item.get('letterGrade') or '').strip().upper().replace(' ', '')
+            if grade not in self.CUET_GRADE_SCALE or not code:
+                continue
+
+            grade_point = self.CUET_GRADE_SCALE[grade]
+            level_term_raw = str(item.get('term') or item.get('levelTerm') or item.get('semester') or 'Level 1 - Term I')
+            level, term_num, term_label = self._parse_term(level_term_raw)
+            term_key = f'L{level}T{term_num}'
+
+            # Repeated course detection
+            seen_count = course_seen_counts.get(code, 0) + 1
+            course_seen_counts[code] = seen_count
+            is_multi = len(course_occurrences.get(code, [])) > 1
+            is_effective = (latest_grade_map.get(code) == grade)
+            is_repeated = is_multi and not is_effective
+
+            course_type = str(item.get('course_type') or item.get('courseType') or '').lower()
+            if not course_type or course_type == 'unknown':
+                course_type = 'lab' if (credit in (Decimal('0.75'), Decimal('1.50')) or item.get('is_lab')) else 'theory'
+
+            course_status = 'Failed' if grade == 'F' else ('Repeated' if is_repeated else 'Passed')
+
+            quality_pts = (credit * grade_point).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            course_obj = {
+                'courseId': code,
+                'courseCode': code,
+                'title': title,
+                'courseTitle': title,
+                'credit': credit.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                'grade': grade,
+                'letterGrade': grade,
+                'gradePoint': grade_point.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                'qualityPoints': quality_pts,
+                'isRepeated': is_repeated,
+                'status': course_status,
+                'courseType': 'Lab' if course_type in ('lab', 'sessional') else 'Theory',
+                'source': 'cuet',
+            }
+
+            if term_key not in terms_map:
+                terms_map[term_key] = {
+                    'id': f'sem-{term_key}',
+                    'name': term_label,
+                    'term': term_label,
+                    'level': level,
+                    'termNum': term_num,
+                    'sortOrder': level * 10 + term_num,
+                    'courses': [],
+                }
+            terms_map[term_key]['courses'].append(course_obj)
+
+        # 4. Sort semesters chronologically
+        sorted_terms = sorted(terms_map.values(), key=lambda t: t['sortOrder'])
+
+        # Compute term metrics
+        semesters_payload = []
+        for sem in sorted_terms:
+            courses = sem['courses']
+            total_cr = Decimal('0.00')
+            comp_cr = Decimal('0.00')
+            total_qp = Decimal('0.00')
+
+            for c in courses:
+                total_cr += c['credit']
+                if c['letterGrade'] != 'F' and not c['isRepeated']:
+                    comp_cr += c['credit']
+                total_qp += c['qualityPoints']
+
+            term_gpa = Decimal('0.00')
+            if total_cr > Decimal('0.00'):
+                term_gpa = (total_qp / total_cr).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+            semesters_payload.append({
+                'id': sem['id'],
+                'name': sem['name'],
+                'term': sem['term'],
+                'level': sem['level'],
+                'gpa': term_gpa,
+                'calculatedGpa': term_gpa,
+                'attemptedCredits': total_cr,
+                'completedCredits': comp_cr,
+                'sortOrder': sem['sortOrder'],
+                'courses': courses,
+            })
+
+        # 5. Calculate Overall Authoritative CGPA & Failed Courses
+        effective_points = Decimal('0.00')
+        effective_credits = Decimal('0.00')
+        total_completed = Decimal('0.00')
+        total_attempted = Decimal('0.00')
+        highest_gpa = Decimal('0.00')
+        failed_courses_dict = {}
+
+        for sem in semesters_payload:
+            if sem['calculatedGpa'] > highest_gpa:
+                highest_gpa = sem['calculatedGpa']
+            total_attempted += sem['attemptedCredits']
+            total_completed += sem['completedCredits']
+
+            for c in sem['courses']:
+                code = c['courseCode']
+                # Track failed courses (if latest grade is still F)
+                if c['letterGrade'] == 'F':
+                    if latest_grade_map.get(code) == 'F':
+                        failed_courses_dict[code] = {
+                            'courseCode': code,
+                            'courseTitle': c['title'],
+                            'credit': float(c['credit']),
+                            'levelTerm': sem['name'],
+                            'attemptsCount': len(course_occurrences.get(code, [])),
+                        }
+                # Effective attempt calculation
+                if not c['isRepeated']:
+                    effective_points += c['qualityPoints']
+                    effective_credits += c['credit']
+
+        overall_cgpa = Decimal('0.00')
+        if effective_credits > Decimal('0.00'):
+            overall_cgpa = (effective_points / effective_credits).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        cleared_courses_count = sum(1 for code, g in latest_grade_map.items() if g != 'F')
+        failed_courses_list = list(failed_courses_dict.values())
+
+        # 6. Assemble Full AcademicResult Payload
+        final_payload = {
+            'student': {
+                'studentId': student_meta.get('studentId') or student_meta.get('student_id') or (request.user.student_id if hasattr(request.user, 'student_id') else 'CUET Student'),
+                'name': student_meta.get('name') or student_meta.get('student_name') or request.user.get_full_name() or 'CUET Student',
+                'department': student_meta.get('department') or 'Computer Science & Engineering',
+                'batch': student_meta.get('batch') or '',
+            },
+            'semesters': semesters_payload,
+            'overall': {
+                'cgpa': overall_cgpa,
+                'calculatedCgpa': overall_cgpa,
+                'completedCredits': total_completed,
+                'attemptedCredits': total_attempted,
+                'qualityPoints': effective_points.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP),
+                'highestGpa': highest_gpa,
+                'totalSemesters': len(semesters_payload),
+                'failedCoursesCount': len(failed_courses_list),
+                'clearedCoursesCount': cleared_courses_count,
+            },
+            'failedCourses': failed_courses_list,
+            'fetchedAt': timezone.now().isoformat(),
+            'source': 'CUET Result Portal (Official Import)',
+            'schemaVersion': '1.0.0',
+            'isSavedCopy': False,
+        }
+
+        # 7. Upsert into database
+        existing = AcademicResult.objects.filter(user=request.user).first()
+        serializer = AcademicResultSerializer(
+            existing, data=final_payload, context={'request': request}
+        ) if existing else AcademicResultSerializer(
+            data=final_payload, context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        # Update SyncDocument
+        try:
+            from django.core.serializers.json import DjangoJSONEncoder
+            from core.models import SyncDocument
+            json_safe_data = json.loads(json.dumps(serializer.data, cls=DjangoJSONEncoder))
+            doc, _ = SyncDocument.objects.get_or_create(
+                user=request.user,
+                key='studysync_cuet_results',
+                defaults={'data': json_safe_data, 'revision': 1},
+            )
+            doc.data = json_safe_data
+            doc.save(update_fields=['data', 'updated_at'])
+        except Exception as e:
+            logger.warning('Failed to update SyncDocument on result import: %s', e)
+
+        return Response(serializer.data, status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED)

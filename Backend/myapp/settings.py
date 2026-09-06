@@ -158,9 +158,18 @@ CORS_ALLOWED_ORIGINS = [
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
+import sys
+
 DATABASE_URL = os.getenv('DATABASE_URL')
 
-if DATABASE_URL:
+if 'test' in sys.argv:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+elif DATABASE_URL:
     # Supabase requires an encrypted PostgreSQL connection. DATABASE_URL may
     # point to either the direct database host or a Supabase pooler.
     DATABASES = {

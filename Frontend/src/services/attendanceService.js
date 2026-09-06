@@ -232,6 +232,10 @@ export const attendanceService = {
 
     // Sync to backend asynchronously if available
     void courseApi.update(course.id, {
+      courseId: course.courseId,
+      courseTitle: course.courseTitle,
+      courseType: course.courseType,
+      credit: course.credit,
       totalClasses: course.totalClasses,
       attendedClasses: course.attendedClasses,
       missedClasses: course.missedClasses,
@@ -274,6 +278,10 @@ export const attendanceService = {
     attendanceService.saveCourses(courses);
 
     void courseApi.update(course.id, {
+      courseId: course.courseId,
+      courseTitle: course.courseTitle,
+      courseType: course.courseType,
+      credit: course.credit,
       totalClasses: course.totalClasses,
       attendedClasses: course.attendedClasses,
       missedClasses: course.missedClasses,
@@ -300,6 +308,31 @@ export const attendanceService = {
     return attendanceService.deleteAttendanceRecord(courseId, recordId);
   },
 
+  // Clear all attendance records, CT marks, and counters across all courses
+  clearAttendanceAndMarks: () => {
+    const courses = attendanceService.getCourses();
+    const cleared = courses.map(c => {
+      const courseType = normalizeCourseType(c.courseType || c.classType);
+      const isTheory = courseType === COURSE_TYPES.THEORY;
+      const credit = Number(c.credit || 3.0);
+      return {
+        ...c,
+        courseType,
+        credit,
+        totalClasses: 0,
+        attendedClasses: 0,
+        missedClasses: 0,
+        assessmentApplicable: isTheory,
+        bestAssessmentCount: isTheory ? Math.max(1, Math.round(credit)) : 0,
+        history: [],
+        assessments: []
+      };
+    });
+    attendanceService.saveCourses(cleared);
+    storageService.set(storageService.KEYS.ASSESSMENTS, []);
+    return cleared;
+  },
+
   // Synchronize courses directly with class routines!
   syncCoursesWithRoutines: (routines = []) => {
     if (!Array.isArray(routines)) return attendanceService.getCourses();
@@ -322,28 +355,35 @@ export const attendanceService = {
       const credit = Number(routine.credit) || (courseMap.get(code)?.credit ?? 3.0);
       const rawType = routine.courseType || routine.classType || 'THEORY';
       const courseType = normalizeCourseType(rawType);
+      const isTheory = courseType === COURSE_TYPES.THEORY;
+      const bestAssessmentCount = isTheory ? Math.max(1, Math.round(credit)) : 0;
       const faculty = routine.teacherName || routine.faculty || courseMap.get(code)?.faculty || '';
       const color = routine.color || courseMap.get(code)?.color || '#4F46E5';
 
       if (courseMap.has(code)) {
         // Update metadata from routine while retaining attendance & CT history
         const existing = courseMap.get(code);
-        courseMap.set(code, {
+        const updated = {
           ...existing,
           courseTitle: title,
           credit,
           courseType,
+          assessmentApplicable: isTheory,
+          bestAssessmentCount,
           faculty: faculty || existing.faculty,
           color: color || existing.color
-        });
+        };
+        courseMap.set(code, updated);
       } else {
         // New course discovered in routine schedule
-        courseMap.set(code, {
+        const newCourse = {
           id: `course-${Date.now()}-${code.replace(/[^A-Za-z0-9]/g, '')}`,
           courseId: code,
           courseTitle: title,
           credit,
           courseType,
+          assessmentApplicable: isTheory,
+          bestAssessmentCount,
           faculty,
           color,
           semester: '5th Semester',
@@ -352,7 +392,9 @@ export const attendanceService = {
           missedClasses: 0,
           history: [],
           assessments: []
-        });
+        };
+        courseMap.set(code, newCourse);
+        void courseApi.create(newCourse).catch(() => {});
       }
     });
 
@@ -365,7 +407,9 @@ export const attendanceService = {
     const courses = attendanceService.getCourses();
     const code = String(courseData.courseId || courseData.code || 'CSE-101').trim().toUpperCase();
     const courseType = normalizeCourseType(courseData.courseType);
+    const isTheory = courseType === COURSE_TYPES.THEORY;
     const credit = Number(courseData.credit || 3.0);
+    const bestAssessmentCount = isTheory ? Math.max(1, Math.round(credit)) : 0;
 
     const newCourse = {
       id: `course-${Date.now()}`,
@@ -373,6 +417,8 @@ export const attendanceService = {
       courseTitle: courseData.courseTitle || courseData.name || 'Untitled Course',
       credit,
       courseType,
+      assessmentApplicable: isTheory,
+      bestAssessmentCount,
       faculty: courseData.faculty || courseData.teacherName || '',
       semester: courseData.semester || '5th Semester',
       color: courseData.color || '#4F46E5',
@@ -395,11 +441,40 @@ export const attendanceService = {
     const index = courses.findIndex(c => c.id === id || c.courseId === id);
     if (index !== -1) {
       const existing = courses[index];
+      const newCourseId = updatedData.courseId ? String(updatedData.courseId).trim().toUpperCase() : existing.courseId;
+      const newTitle = updatedData.courseTitle || existing.courseTitle;
+      const newType = normalizeCourseType(updatedData.courseType || existing.courseType);
+      const isTheory = newType === COURSE_TYPES.THEORY;
+      const newCredit = Number(updatedData.credit ?? existing.credit ?? 3.0);
+      const bestAssessmentCount = isTheory ? Math.max(1, Math.round(newCredit)) : 0;
+
+      // Cascade updated code and title into historical attendance records
+      const updatedHistory = (existing.history || []).map(h => ({
+        ...h,
+        courseCode: newCourseId,
+        courseTitle: newTitle,
+        classType: newType
+      }));
+
+      // Cascade updated code and title into CT marks
+      const updatedAssessments = (existing.assessments || []).map(a => ({
+        ...a,
+        courseId: newCourseId,
+        courseCode: newCourseId,
+        courseTitle: newTitle
+      }));
+
       const merged = {
         ...existing,
         ...updatedData,
-        courseType: normalizeCourseType(updatedData.courseType || existing.courseType),
-        credit: Number(updatedData.credit ?? existing.credit ?? 3.0)
+        courseId: newCourseId,
+        courseTitle: newTitle,
+        courseType: newType,
+        credit: newCredit,
+        assessmentApplicable: isTheory,
+        bestAssessmentCount,
+        history: updatedHistory,
+        assessments: updatedAssessments
       };
       courses[index] = merged;
       attendanceService.saveCourses(courses);
@@ -412,10 +487,52 @@ export const attendanceService = {
 
   deleteCourse: (id) => {
     const courses = attendanceService.getCourses();
-    const filtered = courses.filter(c => c.id !== id && c.courseId !== id);
+    const target = courses.find(c => c.id === id || c.courseId === id);
+    const targetId = target?.id || id;
+    const targetCode = String(target?.courseId || id).trim().toUpperCase();
+
+    // 1. Remove from courses list
+    const filtered = courses.filter(c => c.id !== targetId && String(c.courseId || '').trim().toUpperCase() !== targetCode);
     attendanceService.saveCourses(filtered);
 
-    void courseApi.delete(id).catch(() => {});
+    // 2. Remove all associated assessments & CT marks from storageService.KEYS.ASSESSMENTS
+    const allAssessments = storageService.get(storageService.KEYS.ASSESSMENTS, []);
+    const removedAssessmentIds = new Set();
+    const remainingAssessments = allAssessments.filter(a => {
+      const aCourseId = String(a.courseId || '').trim().toUpperCase();
+      const aCourseCode = String(a.courseCode || '').trim().toUpperCase();
+      const matches = aCourseId === targetCode || aCourseCode === targetCode || a.courseId === targetId;
+      if (matches) {
+        removedAssessmentIds.add(a.id);
+        return false;
+      }
+      return true;
+    });
+    storageService.set(storageService.KEYS.ASSESSMENTS, remainingAssessments);
+
+    // 3. Remove all generated tasks for this course from storageService.KEYS.TASKS
+    const allTasks = storageService.get(storageService.KEYS.TASKS, []);
+    const remainingTasks = allTasks.filter(t => {
+      const tCourseId = String(t.courseId || '').trim().toUpperCase();
+      if (tCourseId === targetCode || t.courseId === targetId) return false;
+      if (t.assessmentId && removedAssessmentIds.has(t.assessmentId)) return false;
+      if (t.id && removedAssessmentIds.has(t.id.replace('task-assessment-', ''))) return false;
+      return true;
+    });
+    storageService.set(storageService.KEYS.TASKS, remainingTasks);
+
+    // 4. Remove all routine entries for this course from storageService.KEYS.ROUTINES
+    const allRoutines = storageService.get(storageService.KEYS.ROUTINES, []);
+    const remainingRoutines = allRoutines.filter(r => {
+      const rCode = String(r.courseId || r.course_code || '').trim().toUpperCase();
+      return rCode !== targetCode && r.courseId !== targetId && String(r.id) !== String(targetId);
+    });
+    if (remainingRoutines.length !== allRoutines.length) {
+      storageService.set(storageService.KEYS.ROUTINES, remainingRoutines);
+    }
+
+    // 5. Delete on backend API (cascades to attendance, assessments, and routines)
+    void courseApi.delete(targetId, targetCode).catch(() => {});
     return filtered;
   },
 

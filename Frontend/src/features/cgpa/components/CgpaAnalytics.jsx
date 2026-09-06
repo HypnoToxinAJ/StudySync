@@ -24,12 +24,17 @@ import {
   BarChart3,
   PieChart as PieIcon,
   Layers,
-  FlaskConical
+  FlaskConical,
+  Calculator,
+  RotateCcw,
+  Sparkles
 } from 'lucide-react';
-import { CUET_GRADE_RANKS, verifyPortalDifference } from '../utils/cgpaCalculations';
+import { CUET_GRADE_POINTS, CUET_GRADE_RANKS, verifyPortalDifference } from '../utils/cgpaCalculations';
 
 export const CgpaAnalytics = ({ semesters = [], overall = {}, failedCourses = [] }) => {
   const [chartType, setChartType] = useState('line'); // 'line' | 'bar'
+  const [whatIfCourse, setWhatIfCourse] = useState('');
+  const [whatIfGrade, setWhatIfGrade] = useState('');
 
   // Prepare trend data across semesters
   const trendData = useMemo(() => {
@@ -81,6 +86,66 @@ export const CgpaAnalytics = ({ semesters = [], overall = {}, failedCourses = []
   const discrepancyCheck = overall.cgpa !== undefined && overall.calculatedCgpa !== undefined
     ? verifyPortalDifference(overall.cgpa, overall.calculatedCgpa)
     : { hasDiscrepancy: false };
+
+  // Unique course list for What-If Grade Simulation
+  const uniqueCourses = useMemo(() => {
+    const map = new Map();
+    semesters.forEach(sem => {
+      (sem.courses || []).forEach(c => {
+        if (!map.has(c.courseCode) || !c.isRepeated) {
+          map.set(c.courseCode, {
+            courseCode: c.courseCode,
+            courseTitle: c.courseTitle,
+            credit: Number(c.credit || 3.0),
+            currentGrade: c.letterGrade,
+            semesterName: sem.name
+          });
+        }
+      });
+    });
+    return Array.from(map.values()).sort((a, b) => a.courseCode.localeCompare(b.courseCode));
+  }, [semesters]);
+
+  // Compute what-if projection
+  const whatIfResult = useMemo(() => {
+    if (!whatIfCourse || !whatIfGrade) return null;
+    const target = uniqueCourses.find(c => c.courseCode === whatIfCourse);
+    if (!target) return null;
+
+    const baseCgpa = Number(overall.cgpa || overall.calculatedCgpa || 0);
+    const baseCredits = Number(overall.completedCredits || 0);
+    const basePoints = Number(overall.qualityPoints || (baseCgpa * baseCredits));
+
+    const oldGp = CUET_GRADE_POINTS[target.currentGrade] !== undefined ? CUET_GRADE_POINTS[target.currentGrade] : 0.0;
+    const newGp = CUET_GRADE_POINTS[whatIfGrade] !== undefined ? CUET_GRADE_POINTS[whatIfGrade] : 0.0;
+
+    const oldQp = target.credit * oldGp;
+    const newQp = target.credit * newGp;
+
+    let simCredits = baseCredits;
+    if (target.currentGrade === 'F' && whatIfGrade !== 'F') {
+      simCredits += target.credit;
+    } else if (target.currentGrade !== 'F' && whatIfGrade === 'F') {
+      simCredits = Math.max(0, simCredits - target.credit);
+    }
+
+    const simPoints = Math.max(0, basePoints - oldQp + newQp);
+    const effectiveCredits = simCredits > 0 ? simCredits : (baseCredits > 0 ? baseCredits : target.credit);
+    const projectedCgpa = effectiveCredits > 0 ? Number((simPoints / effectiveCredits).toFixed(2)) : 0;
+    const diff = Number((projectedCgpa - baseCgpa).toFixed(2));
+
+    return {
+      course: target,
+      originalGrade: target.currentGrade,
+      simulatedGrade: whatIfGrade,
+      baseCgpa,
+      projectedCgpa,
+      diff,
+      isPositive: diff > 0,
+      isNegative: diff < 0,
+      isNeutral: diff === 0
+    };
+  }, [whatIfCourse, whatIfGrade, uniqueCourses, overall]);
 
   const cgpaValue = Number(overall.cgpa || overall.calculatedCgpa || 0);
   const completedCredits = Number(overall.completedCredits || 0);
@@ -342,6 +407,121 @@ export const CgpaAnalytics = ({ semesters = [], overall = {}, failedCourses = []
                 <Bar dataKey="count" fill="#06B6D4" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+
+      {/* WHAT-IF GRADE SIMULATOR */}
+      <div className="p-6 sm:p-7 rounded-3xl bg-gradient-to-br from-white via-indigo-50/20 to-white dark:from-slate-900 dark:via-indigo-950/20 dark:to-slate-900 border border-slate-200/90 dark:border-slate-800 shadow-sm space-y-5">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center space-x-3">
+            <div className="p-2.5 rounded-2xl bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+              <FlaskConical className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center space-x-2">
+                <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white tracking-tight">
+                  What-If Grade Simulator
+                </h3>
+                <span className="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-extrabold uppercase tracking-wide">
+                  Simulation
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Simulate the impact on your CGPA if you had earned a different grade or retaken a subject. Operates on a temporary working copy.
+              </p>
+            </div>
+          </div>
+
+          {(whatIfCourse || whatIfGrade) && (
+            <button
+              type="button"
+              onClick={() => {
+                setWhatIfCourse('');
+                setWhatIfGrade('');
+              }}
+              className="inline-flex items-center space-x-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 transition-colors self-start sm:self-auto"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Reset Simulation</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+          {/* Select Course */}
+          <div className="md:col-span-5 space-y-1">
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+              Select Course to Simulate
+            </label>
+            <select
+              value={whatIfCourse}
+              onChange={(e) => {
+                setWhatIfCourse(e.target.value);
+                const found = uniqueCourses.find(c => c.courseCode === e.target.value);
+                if (found && !whatIfGrade) {
+                  // Default suggested simulation: one step higher or A+
+                  setWhatIfGrade('A+');
+                }
+              }}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-xs font-bold outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all"
+            >
+              <option value="">-- Choose a course ({uniqueCourses.length}) --</option>
+              {uniqueCourses.map((c) => (
+                <option key={c.courseCode} value={c.courseCode}>
+                  {c.courseCode} — Current: {c.currentGrade} ({c.credit} cr, {c.semesterName})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Select Hypothetical Grade */}
+          <div className="md:col-span-3 space-y-1">
+            <label className="block text-xs font-bold text-slate-700 dark:text-slate-300">
+              Hypothetical Grade
+            </label>
+            <select
+              value={whatIfGrade}
+              onChange={(e) => setWhatIfGrade(e.target.value)}
+              disabled={!whatIfCourse}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white text-xs font-bold outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-all disabled:opacity-50"
+            >
+              <option value="">-- Choose Grade --</option>
+              {CUET_GRADE_RANKS.map((g) => (
+                <option key={g} value={g}>
+                  {g} ({CUET_GRADE_POINTS[g].toFixed(2)})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Result Output Panel */}
+          <div className="md:col-span-4 p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1.5">
+            {whatIfResult ? (
+              <div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 dark:text-slate-400">Current CGPA:</span>
+                  <strong className="text-slate-800 dark:text-slate-200">{whatIfResult.baseCgpa.toFixed(2)}</strong>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500 dark:text-slate-400">Projected CGPA:</span>
+                  <strong className="text-brand-600 dark:text-brand-400 text-sm">{whatIfResult.projectedCgpa.toFixed(2)}</strong>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t border-slate-100 dark:border-slate-700 text-xs font-bold">
+                  <span>Net Difference:</span>
+                  <span className={`flex items-center gap-1 ${
+                    whatIfResult.isPositive ? 'text-emerald-600 dark:text-emerald-400' : (whatIfResult.isNegative ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400')
+                  }`}>
+                    {whatIfResult.isPositive ? `+${whatIfResult.diff.toFixed(2)}` : `${whatIfResult.diff.toFixed(2)}`}
+                    {whatIfResult.isPositive && <TrendingUp className="w-3.5 h-3.5" />}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-2 text-xs text-slate-400">
+                Select a course & simulated grade to project outcome
+              </div>
+            )}
           </div>
         </div>
       </div>

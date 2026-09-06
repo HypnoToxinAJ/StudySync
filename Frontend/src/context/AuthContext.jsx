@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState
 } from 'react';
 import { storageService } from '../services/storageService';
@@ -50,11 +51,28 @@ export const AuthProvider = ({ children }) => {
   const [user, setUserState] = useState(null);
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
+  const lastAppliedTokenRef = useRef(null);
+  const isHydratingUserRef = useRef(false);
 
   const applySession = useCallback(async nextSession => {
+    const token = nextSession?.access_token || null;
     setCurrentSession(nextSession);
     setSession(nextSession);
     let nextUser = toStudySyncUser(nextSession?.user);
+
+    if (!nextSession?.user) {
+      lastAppliedTokenRef.current = null;
+      setUserState(null);
+      storageService.clearWorkspaceCache();
+      return null;
+    }
+
+    // Prevent duplicate simultaneous hydration for the same active session
+    if (lastAppliedTokenRef.current === token && isHydratingUserRef.current) {
+      return nextUser;
+    }
+    lastAppliedTokenRef.current = token;
+    isHydratingUserRef.current = true;
 
     if (nextUser) {
       try {
@@ -62,6 +80,7 @@ export const AuthProvider = ({ children }) => {
         nextUser = {
           ...nextUser,
           ...backendUser,
+          onboarded: Boolean(nextUser.onboarded || backendUser?.onboarded),
           id: nextUser.id,
           email: nextUser.email,
           isLoggedIn: true
@@ -75,9 +94,15 @@ export const AuthProvider = ({ children }) => {
 
     if (nextUser) {
       storageService.hydrateUser(nextUser);
-      await storageService.prepareForUser(nextUser.id).catch(error => {
+      try {
+        await storageService.prepareForUser(nextUser.id);
+      } catch (error) {
         console.warn('StudySync cloud data will retry when the backend is available.', error);
-      });
+      } finally {
+        isHydratingUserRef.current = false;
+      }
+    } else {
+      isHydratingUserRef.current = false;
     }
     return nextUser;
   }, []);
@@ -102,9 +127,11 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return;
-      // Keep the callback synchronous and perform application hydration separately.
+      if (event === 'INITIAL_SESSION' && nextSession?.access_token && nextSession.access_token === lastAppliedTokenRef.current) {
+        return;
+      }
       setTimeout(() => {
         if (active) void applySession(nextSession);
       }, 0);
@@ -165,9 +192,33 @@ export const AuthProvider = ({ children }) => {
       data: { ...onboardingData, onboarded: true }
     });
     throwIfError(error);
-    const updated = toStudySyncUser(data.user);
+
+    let updated = toStudySyncUser(data.user);
+    updated = {
+      ...updated,
+      ...onboardingData,
+      onboarded: true
+    };
+
+    if (apiClient.hasSession()) {
+      try {
+        const backendProfile = await apiClient.patch('/auth/me/', {
+          ...onboardingData,
+          onboarded: true
+        });
+        updated = {
+          ...updated,
+          ...backendProfile,
+          onboarded: true
+        };
+      } catch (err) {
+        console.warn('Could not sync onboarding to backend immediately:', err);
+      }
+    }
+
     setUserState(updated);
     storageService.hydrateUser(updated);
+    storageService.set(storageService.KEYS.USER, updated);
     return updated;
   };
 

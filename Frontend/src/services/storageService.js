@@ -44,6 +44,47 @@ const SYNC_KEYS = new Set([...Object.values(KEYS), ...EXTRA_SYNC_KEYS].filter(ke
 const revisions = new Map();
 const pendingTimers = new Map();
 let hydrating = false;
+let inFlightSyncPromise = null;
+
+const uploadWithConflictResolution = async documents => {
+  try {
+    const uploaded = await apiClient.put('/sync/', { documents });
+    Object.entries(uploaded?.documents || {}).forEach(([key, document]) => {
+      revisions.set(key, document.revision);
+      clearPending(key);
+    });
+    return uploaded;
+  } catch (error) {
+    if (error?.status === 409) {
+      const conflicts = error?.payload?.conflicts || error?.data?.conflicts || {};
+      const retryDocuments = {};
+      Object.entries(documents).forEach(([key, doc]) => {
+        const actualRev = conflicts[key]?.actual !== undefined ? conflicts[key].actual : (revisions.get(key) || 0);
+        revisions.set(key, actualRev);
+        retryDocuments[key] = {
+          data: doc.data,
+          baseRevision: actualRev
+        };
+      });
+
+      try {
+        const retried = await apiClient.put('/sync/', { documents: retryDocuments, force: true });
+        Object.entries(retried?.documents || {}).forEach(([key, document]) => {
+          revisions.set(key, document.revision);
+          clearPending(key);
+        });
+        return retried;
+      } catch (retryError) {
+        console.warn('StudySync sync conflict reconciliation deferred:', retryError?.message || retryError);
+        Object.entries(conflicts).forEach(([key, conflict]) => {
+          if (conflict?.actual !== undefined) revisions.set(key, conflict.actual);
+        });
+        return null;
+      }
+    }
+    throw error;
+  }
+};
 
 const DEFAULT_SETTINGS = {
   attendanceRules: { defaultAllowedRatio: 1.0 },
@@ -112,7 +153,8 @@ const profilePayload = user => ({
   weeklyClassDays: user.weeklyClassDays,
   academicGoals: user.academicGoals,
   avatar: user.avatar,
-  customAvatarImage: user.customAvatarImage
+  customAvatarImage: user.customAvatarImage,
+  onboarded: Boolean(user.onboarded)
 });
 
 const dispatchSyncEvent = (name, detail = {}) => {
@@ -170,7 +212,7 @@ export const storageService = {
         }
       }
     } catch (e) {
-      console.error(`Error writing ${key} to localStorage:`, e);
+      console.error(`Error writing ${key} from localStorage:`, e);
     }
   },
 
@@ -186,27 +228,29 @@ export const storageService = {
       const codeLower = String(course.courseId || '').toLowerCase();
       const credit = Number(course.credit || 3.0);
 
-      // Infer courseType if missing
+      // Infer courseType if missing or normalize it
       let courseType = course.courseType;
       if (!courseType) {
         modified = true;
         if (titleLower.includes('lab') || codeLower.includes('lab')) {
-          courseType = 'lab';
+          courseType = 'LAB';
         } else if (titleLower.includes('sessional') || codeLower.includes('sessional')) {
-          courseType = 'sessional';
+          courseType = 'SESSIONAL';
         } else if (credit === 1.5 || credit === 0.75) {
-          courseType = 'lab';
-        } else if (credit === 3.0 || credit === 2.0) {
-          courseType = 'theory';
+          courseType = 'LAB';
         } else {
-          courseType = 'theory';
-          course.requiresReview = true;
+          courseType = 'THEORY';
         }
+      } else {
+        const norm = String(courseType).trim().toUpperCase();
+        if (norm.includes('LAB')) courseType = 'LAB';
+        else if (norm.includes('SESSIONAL')) courseType = 'SESSIONAL';
+        else courseType = 'THEORY';
       }
 
-      const isTheory = courseType === 'theory';
+      const isTheory = courseType === 'THEORY';
       const assessmentApplicable = isTheory;
-      const bestAssessmentCount = isTheory ? (credit === 2.0 ? 2 : 3) : 0;
+      const bestAssessmentCount = isTheory ? Math.max(1, Math.round(credit)) : 0;
 
       if (course.courseType !== courseType) {
         course.courseType = courseType;
@@ -259,49 +303,61 @@ export const storageService = {
 
   syncFromServer: async () => {
     if (!apiClient.hasSession()) return { documents: {} };
-    const response = await apiClient.get('/sync/');
-    const remoteDocuments = response?.documents || {};
-    const dirtyKeys = pendingSyncKeys();
-    hydrating = true;
-    Object.entries(remoteDocuments).forEach(([key, document]) => {
-      if (!SYNC_KEYS.has(key)) return;
-      revisions.set(key, document.revision);
-      if (!dirtyKeys.has(key)) writeLocal(key, document.data);
-    });
-    hydrating = false;
 
-    if (Object.keys(remoteDocuments).length === 0) {
-      const documents = {};
-      SYNC_KEYS.forEach(key => {
-        const value = storageService.get(key, undefined);
-        if (value !== undefined) documents[key] = { data: value, baseRevision: 0 };
-      });
-      if (Object.keys(documents).length) {
-        const uploaded = await apiClient.put('/sync/', { documents });
-        Object.entries(uploaded.documents || {}).forEach(([key, document]) => {
-          revisions.set(key, document.revision);
-          clearPending(key);
-        });
-      }
-    } else if (dirtyKeys.size) {
-      const documents = {};
-      dirtyKeys.forEach(key => {
-        if (!SYNC_KEYS.has(key)) return;
-        const value = storageService.get(key, undefined);
-        if (value !== undefined) {
-          documents[key] = { data: value, baseRevision: remoteDocuments[key]?.revision || 0 };
-        }
-      });
-      if (Object.keys(documents).length) {
-        const uploaded = await apiClient.put('/sync/', { documents });
-        Object.entries(uploaded.documents || {}).forEach(([key, document]) => {
-          revisions.set(key, document.revision);
-          clearPending(key);
-        });
-      }
+    // Deduplicate concurrent sync calls to prevent race conditions & stale revision conflicts
+    if (inFlightSyncPromise) {
+      return inFlightSyncPromise;
     }
-    dispatchSyncEvent('studysync:synced', { documents: remoteDocuments });
-    return response;
+
+    inFlightSyncPromise = (async () => {
+      try {
+        const response = await apiClient.get('/sync/');
+        const remoteDocuments = response?.documents || {};
+        const dirtyKeys = pendingSyncKeys();
+        hydrating = true;
+        Object.entries(remoteDocuments).forEach(([key, document]) => {
+          if (!SYNC_KEYS.has(key)) return;
+          revisions.set(key, document.revision);
+          if (!dirtyKeys.has(key)) writeLocal(key, document.data);
+        });
+        hydrating = false;
+
+        if (Object.keys(remoteDocuments).length === 0) {
+          const documents = {};
+          SYNC_KEYS.forEach(key => {
+            const value = storageService.get(key, undefined);
+            if (value !== undefined) documents[key] = { data: value, baseRevision: 0 };
+          });
+          if (Object.keys(documents).length) {
+            await uploadWithConflictResolution(documents);
+          }
+        } else if (dirtyKeys.size) {
+          const documents = {};
+          dirtyKeys.forEach(key => {
+            if (!SYNC_KEYS.has(key)) return;
+            const value = storageService.get(key, undefined);
+            if (value !== undefined) {
+              documents[key] = {
+                data: value,
+                baseRevision: remoteDocuments[key]?.revision ?? revisions.get(key) ?? 0
+              };
+            }
+          });
+          if (Object.keys(documents).length) {
+            await uploadWithConflictResolution(documents);
+          }
+        }
+        dispatchSyncEvent('studysync:synced', { documents: remoteDocuments });
+        return response;
+      } catch (err) {
+        console.warn('Storage sync failed:', err?.message || err);
+        return { documents: {} };
+      } finally {
+        inFlightSyncPromise = null;
+      }
+    })();
+
+    return inFlightSyncPromise;
   },
 
   prepareForUser: async userId => {

@@ -1311,8 +1311,11 @@ export const AttendancePage = () => {
               <button
                 type="button"
                 onClick={() => {
-                  deleteCourse(editingCourse.id);
-                  setIsCourseModalOpen(false);
+                  const name = editingCourse.courseId || editingCourse.courseTitle || 'this course';
+                  if (window.confirm(`Are you sure you want to delete ${name}? All associated routine classes, attendance records, and CT marks will also be deleted.`)) {
+                    deleteCourse(editingCourse.id);
+                    setIsCourseModalOpen(false);
+                  }
                 }}
                 className="text-xs font-bold text-rose-500 hover:text-rose-600 flex items-center space-x-1"
               >

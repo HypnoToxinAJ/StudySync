@@ -38,6 +38,7 @@ export const RoutinePage = () => {
     updateRoutine,
     deleteRoutine,
     courses,
+    deleteCourse,
     refreshData
   } = useData();
 
@@ -414,6 +415,7 @@ export const RoutinePage = () => {
         routines={effectiveRoutines}
         allCourses={courses}
         isLoading={isLoading}
+        onDeleteCourse={deleteCourse}
       />
 
       {/* OCR Image Import Modal */}

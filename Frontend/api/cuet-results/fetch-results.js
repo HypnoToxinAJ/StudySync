@@ -118,9 +118,9 @@ const fetchResultWithBrowser = async ({ loginUrl, cookie, csrfToken, studentId, 
     }));
 
     const page = await context.newPage();
-      // Do not load captcha.php again: it would replace the challenge image
-      // already shown to the user and invalidate the entered code.
-      await page.route('**/captcha.php', route => route.abort());
+    // Do not load captcha.php again: it would replace the challenge image
+    // already shown to the user and invalidate the entered code.
+    await page.route('**/captcha.php', route => route.abort());
     await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
 
     if (csrfToken) {
@@ -133,7 +133,7 @@ const fetchResultWithBrowser = async ({ loginUrl, cookie, csrfToken, studentId, 
     await page.locator('input[name="captcha"]').first().fill(captcha);
 
     await Promise.all([
-      page.waitForLoadState('domcontentloaded').catch(() => {}),
+      page.waitForLoadState('domcontentloaded').catch(() => { }),
       page.locator('button[type="submit"], input[type="submit"]').first().click()
     ]);
 
@@ -150,7 +150,7 @@ const fetchResultWithBrowser = async ({ loginUrl, cookie, csrfToken, studentId, 
       cookie: cookies.map(cookieItem => `${cookieItem.name}=${cookieItem.value}`).join('; ')
     };
   } finally {
-    await browser.close().catch(() => {});
+    await browser.close().catch(() => { });
   }
 };
 

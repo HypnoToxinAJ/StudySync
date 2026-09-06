@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, Trash2 } from 'lucide-react';
 
 const formatCredit = (value) => {
   const numeric = Number(value);
@@ -7,7 +7,7 @@ const formatCredit = (value) => {
   return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1);
 };
 
-export const RoutineCoursesTable = ({ routines = [], allCourses = [], isLoading = false }) => {
+export const RoutineCoursesTable = ({ routines = [], allCourses = [], isLoading = false, onDeleteCourse }) => {
   // Extract unique courses included in the routine
   const uniqueCourses = useMemo(() => {
     const courseMap = new Map();
@@ -24,8 +24,10 @@ export const RoutineCoursesTable = ({ routines = [], allCourses = [], isLoading 
 
         const title = routine.courseTitle || routine.course_title || match?.courseTitle || match?.name || code;
         const credit = routine.credit ?? match?.credit ?? 0;
+        const id = match?.id || code;
 
         courseMap.set(code, {
+          id,
           code,
           title,
           credit: Number(credit) || 0
@@ -71,6 +73,7 @@ export const RoutineCoursesTable = ({ routines = [], allCourses = [], isLoading 
                 <th className="py-2.5 px-3 w-36">Course Code</th>
                 <th className="py-2.5 px-3">Course Name</th>
                 <th className="py-2.5 px-3 w-20 text-center">Credit</th>
+                {onDeleteCourse && <th className="py-2.5 px-3 w-16 text-center">Action</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -93,6 +96,22 @@ export const RoutineCoursesTable = ({ routines = [], allCourses = [], isLoading 
                   <td className="py-3 px-3 text-center font-bold text-slate-600 dark:text-slate-400">
                     {formatCredit(course.credit)}
                   </td>
+                  {onDeleteCourse && (
+                    <td className="py-3 px-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (window.confirm(`Delete course ${course.code}? All associated routine classes, attendance records, and CT marks will also be deleted.`)) {
+                            onDeleteCourse(course.id || course.code);
+                          }
+                        }}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg transition-colors"
+                        title="Delete course, routine classes, attendance, and CT marks"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

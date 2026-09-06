@@ -267,7 +267,13 @@ export const marksService = {
     courses[index] = course;
     attendanceService.saveCourses(courses);
 
-    void courseApi.update(course.id, { assessments: course.assessments }).catch(() => {});
+    void courseApi.update(course.id, {
+      courseId: course.courseId,
+      courseTitle: course.courseTitle,
+      courseType: course.courseType,
+      credit: course.credit,
+      assessments: course.assessments
+    }).catch(() => {});
     return { success: true, course, entry: newAst };
   },
 
@@ -320,7 +326,13 @@ export const marksService = {
     courses[cIndex] = course;
     attendanceService.saveCourses(courses);
 
-    void courseApi.update(course.id, { assessments: course.assessments }).catch(() => {});
+    void courseApi.update(course.id, {
+      courseId: course.courseId,
+      courseTitle: course.courseTitle,
+      courseType: course.courseType,
+      credit: course.credit,
+      assessments: course.assessments
+    }).catch(() => {});
     return { success: true, course, entry: updated };
   },
 
@@ -336,7 +348,13 @@ export const marksService = {
     courses[cIndex] = course;
     attendanceService.saveCourses(courses);
 
-    void courseApi.update(course.id, { assessments: course.assessments }).catch(() => {});
+    void courseApi.update(course.id, {
+      courseId: course.courseId,
+      courseTitle: course.courseTitle,
+      courseType: course.courseType,
+      credit: course.credit,
+      assessments: course.assessments
+    }).catch(() => {});
     return true;
   },
 

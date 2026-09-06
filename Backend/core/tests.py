@@ -143,7 +143,29 @@ class SupabaseJWTAuthenticationTests(TestCase):
         self.assertEqual(response.data['name'], 'Google Student')
         self.assertEqual(response.data['provider'], 'google')
         self.assertTrue(response.data['isLoggedIn'])
+        self.assertFalse(response.data['onboarded'])
         self.assertEqual(UserProfile.objects.count(), 1)
+
+    def test_auth_me_patches_onboarded_and_profile(self):
+        token = self.make_token()
+        response = self.client.patch(
+            '/api/v1/auth/me/',
+            {
+                'name': 'Bapon Saha',
+                'university': 'CUET',
+                'department': 'CSE',
+                'semester': '5th Semester',
+                'studentId': '2004015',
+                'onboarded': True,
+            },
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['name'], 'Bapon Saha')
+        self.assertTrue(response.data['onboarded'])
+        profile = UserProfile.objects.get(user__email='student@example.com')
+        self.assertTrue(profile.onboarded)
 
     def test_sync_documents_are_created_and_versioned(self):
         token = self.make_token()
@@ -214,3 +236,31 @@ class SupabaseJWTAuthenticationTests(TestCase):
         )
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.data['conflicts']['studysync_courses']['actual'], 3)
+
+    def test_sync_accepts_force_flag_on_conflict(self):
+        token = self.make_token()
+        authorization = f'Bearer {token}'
+        SyncDocument.objects.create(
+            user=self.authenticate(token)[0],
+            key='studysync_courses',
+            data=[],
+            revision=5,
+        )
+
+        response = self.client.put(
+            '/api/v1/sync/',
+            {
+                'documents': {
+                    'studysync_courses': {'data': [{'courseId': 'CSE-301'}], 'baseRevision': 1}
+                },
+                'force': True,
+            },
+            content_type='application/json',
+            HTTP_AUTHORIZATION=authorization,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['documents']['studysync_courses']['revision'], 6)
+        self.assertEqual(
+            response.data['documents']['studysync_courses']['data'][0]['courseId'],
+            'CSE-301',
+        )

@@ -160,21 +160,26 @@ export const DataProvider = ({ children }) => {
 
   const updateCourse = (id, data) => {
     const updated = attendanceService.updateCourse(id, data);
-    // If course title or teacher changed, update matching routines as well
-    if (updated && (data.courseTitle || data.credit || data.teacherName || data.faculty || data.color)) {
+    if (updated) {
       const allRoutines = routineService.getAll();
       const codeUpper = String(updated.courseId || '').trim().toUpperCase();
+      const oldCodeUpper = data.oldCourseId ? String(data.oldCourseId).trim().toUpperCase() : codeUpper;
       let changed = false;
       const updatedRoutines = allRoutines.map(r => {
-        if (String(r.courseId || '').trim().toUpperCase() === codeUpper) {
+        const rCode = String(r.courseId || r.course_code || '').trim().toUpperCase();
+        if (rCode === codeUpper || rCode === oldCodeUpper || String(r.id) === String(id)) {
           changed = true;
-          return {
+          const updatedSlot = {
             ...r,
-            courseTitle: data.courseTitle || r.courseTitle,
-            teacherName: data.faculty || data.teacherName || r.teacherName,
-            credit: data.credit !== undefined ? Number(data.credit) : r.credit,
-            color: data.color || r.color
+            courseId: updated.courseId,
+            courseTitle: data.courseTitle || updated.courseTitle || r.courseTitle,
+            teacherName: data.faculty || data.teacherName || updated.faculty || r.teacherName,
+            credit: data.credit !== undefined ? Number(data.credit) : updated.credit,
+            courseType: updated.courseType || r.courseType,
+            color: data.color || updated.color || r.color
           };
+          void routineApi.update(r.id, updatedSlot).catch(() => {});
+          return updatedSlot;
         }
         return r;
       });
@@ -183,14 +188,14 @@ export const DataProvider = ({ children }) => {
       }
     }
     refreshData();
-    showToast('Course updated!');
+    showToast('Course updated and synced with routine & backend!');
     return updated;
   };
 
   const deleteCourse = (id) => {
     attendanceService.deleteCourse(id);
     refreshData();
-    showToast('Course deleted.');
+    showToast('Course, routine classes, attendance, and CT marks deleted.');
   };
 
   // --- Course CT Marks Handlers ---

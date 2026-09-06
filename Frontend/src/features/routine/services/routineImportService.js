@@ -27,12 +27,16 @@ export const routineImportService = {
     try {
       courses.filter(course => course.include !== false).forEach(course => {
         const existingIndex = nextCourses.findIndex(existing => normalizeCourseId(existing.courseId) === normalizeCourseId(course.courseId));
-        const isTheory = course.courseType === 'theory';
+        const normType = String(course.courseType || '').trim().toUpperCase();
+        const normalizedCourseType = normType.includes('LAB') ? 'LAB' : normType.includes('SESSIONAL') ? 'SESSIONAL' : 'THEORY';
+        const isTheory = normalizedCourseType === 'THEORY';
+        const creditNum = Number(course.credit) || 3.0;
+        const bestAssessmentCount = isTheory ? Math.max(1, Math.round(creditNum)) : 0;
         const approvedData = {
           courseId: course.courseId.trim(),
           courseTitle: course.title.trim(),
-          credit: Number(course.credit),
-          courseType: course.courseType,
+          credit: creditNum,
+          courseType: normalizedCourseType,
           faculty: course.teacherName.trim(),
           semester: course.semester || '',
           group: selectedGroup,
@@ -41,11 +45,11 @@ export const routineImportService = {
           importId,
           updatedAt: now,
           assessmentApplicable: isTheory,
-          bestAssessmentCount: isTheory ? (Number(course.credit) === 2 ? 2 : 3) : 0
+          bestAssessmentCount
         };
         if (existingIndex === -1) {
           const id = makeId('course');
-          nextCourses.push({ id, ...approvedData, color: '#4F46E5', missedClasses: 0, totalClasses: 0, attendedClasses: 0, history: [], assessments: [] , createdAt: now });
+          nextCourses.push({ id, ...approvedData, color: '#4F46E5', missedClasses: 0, totalClasses: 0, attendedClasses: 0, history: [], assessments: [], createdAt: now });
           createdCourseIds.push(id);
         } else if (course.courseResolution === 'replace') {
           replacedCourses.push({ ...nextCourses[existingIndex] });

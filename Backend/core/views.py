@@ -80,6 +80,7 @@ class SyncView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         requested = serializer.validated_data['documents']
+        force = serializer.validated_data.get('force', False)
 
         encoded_size = len(
             json.dumps(requested, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
@@ -97,21 +98,22 @@ class SyncView(APIView):
             )
         }
         conflicts = {}
-        for key, payload in requested.items():
-            current = existing.get(key)
-            expected = payload['baseRevision']
-            actual = current.revision if current else 0
-            if expected != actual:
-                conflicts[key] = {'expected': expected, 'actual': actual}
+        if not force:
+            for key, payload in requested.items():
+                current = existing.get(key)
+                expected = payload['baseRevision']
+                actual = current.revision if current else 0
+                if expected != actual:
+                    conflicts[key] = {'expected': expected, 'actual': actual}
 
-        if conflicts:
-            return Response(
-                {
-                    'detail': 'One or more documents changed on another client.',
-                    'conflicts': conflicts,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
+            if conflicts:
+                return Response(
+                    {
+                        'detail': 'One or more documents changed on another client.',
+                        'conflicts': conflicts,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
 
         updated = []
         for key, payload in requested.items():

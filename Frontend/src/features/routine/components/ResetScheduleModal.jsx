@@ -4,6 +4,7 @@ import { Modal } from '../../../components/common/Modal';
 import { storageService } from '../../../services/storageService';
 import { routineService } from '../../../services/routineService';
 import { routineApi } from '../../../services/routineApi';
+import { attendanceService } from '../../../services/attendanceService';
 import { initialRoutines } from '../../../data/mockData';
 import { useToast } from '../../../context/ToastContext';
 
@@ -20,12 +21,14 @@ export const ResetScheduleModal = ({
   const handleClearRoutine = async () => {
     setIsProcessing(true);
     try {
-      // Clear from backend database
+      // Clear from backend database (routines, attendance, CT marks)
       await routineApi.clearAll().catch(() => {});
       // Clear local routine storage
       routineService.saveAll([]);
+      // Clear local attendance records and CT marks
+      attendanceService.clearAttendanceAndMarks();
       onResetCompleted?.();
-      showToast('All routine classes have been cleared.', 'info');
+      showToast('All routine classes, attendance, and CT marks have been cleared.', 'info');
       onClose();
     } catch (error) {
       showToast(error.message || 'Failed to clear routine.', 'error');
@@ -41,11 +44,12 @@ export const ResetScheduleModal = ({
       // Clear backend and recreate sample classes
       await routineApi.clearAll().catch(() => {});
       routineService.saveAll(initialRoutines);
+      attendanceService.clearAttendanceAndMarks();
       for (const r of initialRoutines) {
         void routineApi.create(r).catch(() => {});
       }
       onResetCompleted?.();
-      showToast('Routine reset to default sample schedule.', 'success');
+      showToast('Routine reset to default schedule with fresh attendance & CT marks.', 'success');
       onClose();
     } catch (error) {
       showToast(error.message || 'Failed to restore default routine.', 'error');
@@ -89,7 +93,7 @@ export const ResetScheduleModal = ({
               <div>
                 <h4 className="font-extrabold text-slate-900 dark:text-white">Clear All Classes</h4>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  Removes all routine entries from your timetable so you can start fresh.
+                  Removes all routine entries, attendance records, and CT marks so you can start fresh.
                 </p>
               </div>
             </div>

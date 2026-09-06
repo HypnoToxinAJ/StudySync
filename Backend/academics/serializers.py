@@ -104,7 +104,8 @@ def sync_nested(parent, relation_name, model, items, parent_field):
 
 class AttendanceRecordSerializer(UserOwnedModelSerializer):
     courseId = serializers.CharField(source='course_id', read_only=True)
-    classType = serializers.CharField(source='class_type')
+    classType = serializers.CharField(source='class_type', required=False)
+    status = serializers.CharField(required=False)
 
     class Meta:
         model = AttendanceRecord
@@ -119,13 +120,34 @@ class AttendanceRecordSerializer(UserOwnedModelSerializer):
             'updatedAt',
         ]
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        raw_status = str(attrs.get('status', getattr(self.instance, 'status', 'attended')) or '').strip().lower()
+        if raw_status in ('absent', 'missed'):
+            attrs['status'] = AttendanceRecord.Status.MISSED
+        else:
+            attrs['status'] = AttendanceRecord.Status.ATTENDED
+
+        raw_type = str(attrs.get('class_type', getattr(self.instance, 'class_type', 'theory')) or '').strip().lower()
+        if 'lab' in raw_type:
+            attrs['class_type'] = Course.CourseType.LAB
+        elif 'sessional' in raw_type:
+            attrs['class_type'] = Course.CourseType.SESSIONAL
+        elif 'tutorial' in raw_type:
+            attrs['class_type'] = Course.CourseType.TUTORIAL
+        else:
+            attrs['class_type'] = Course.CourseType.THEORY
+        return attrs
+
 
 class CourseAssessmentSerializer(UserOwnedModelSerializer):
-    type = serializers.CharField(source='assessment_type')
-    totalMarks = NumberDecimalField(source='total_marks', max_digits=7, decimal_places=2)
-    expectedMarks = NumberDecimalField(source='expected_marks', max_digits=7, decimal_places=2)
-    obtainedMarks = NumberDecimalField(source='obtained_marks', max_digits=7, decimal_places=2)
-    isMissed = serializers.BooleanField(source='is_missed')
+    type = serializers.CharField(source='assessment_type', required=False)
+    totalMarks = NumberDecimalField(source='total_marks', max_digits=7, decimal_places=2, required=False)
+    expectedMarks = NumberDecimalField(source='expected_marks', max_digits=7, decimal_places=2, required=False)
+    obtainedMarks = NumberDecimalField(source='obtained_marks', max_digits=7, decimal_places=2, required=False)
+    isMissed = serializers.BooleanField(source='is_missed', required=False)
+    name = serializers.CharField(required=False)
+    date = serializers.DateField(required=False)
 
     class Meta:
         model = CourseAssessment
@@ -144,10 +166,41 @@ class CourseAssessmentSerializer(UserOwnedModelSerializer):
         ]
 
     def validate(self, attrs):
+        from django.utils import timezone
         attrs = super().validate(attrs)
+
+        raw_type = str(attrs.get('assessment_type', getattr(self.instance, 'assessment_type', 'CT')) or 'CT').strip().upper()
+        if 'ASSIGNMENT' in raw_type:
+            attrs['assessment_type'] = CourseAssessment.AssessmentType.ASSIGNMENT
+        elif 'EXAM' in raw_type:
+            attrs['assessment_type'] = CourseAssessment.AssessmentType.EXAMINATION
+        else:
+            attrs['assessment_type'] = CourseAssessment.AssessmentType.CLASS_TEST
+
         total = attrs.get('total_marks', getattr(self.instance, 'total_marks', None))
+        if total is None:
+            total = 20
+            attrs['total_marks'] = total
+
         expected = attrs.get('expected_marks', getattr(self.instance, 'expected_marks', None))
+        if expected is None:
+            attrs['expected_marks'] = total
+            expected = total
+
         obtained = attrs.get('obtained_marks', getattr(self.instance, 'obtained_marks', None))
+        if obtained is None:
+            obtained = 0
+            attrs['obtained_marks'] = obtained
+
+        if attrs.get('is_missed') is None:
+            attrs['is_missed'] = getattr(self.instance, 'is_missed', False)
+
+        if not attrs.get('name') and not getattr(self.instance, 'name', None):
+            attrs['name'] = 'CT'
+
+        if not attrs.get('date') and not getattr(self.instance, 'date', None):
+            attrs['date'] = timezone.now().date()
+
         if total is not None and expected is not None and expected > total:
             raise serializers.ValidationError({'expectedMarks': 'Cannot exceed total marks.'})
         if total is not None and obtained is not None and obtained > total:
@@ -201,16 +254,27 @@ class CourseSerializer(UserOwnedModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
-        course_type = attrs.get('course_type', getattr(self.instance, 'course_type', 'theory'))
-        credit = attrs.get('credit', getattr(self.instance, 'credit', 0))
+        raw_type = str(attrs.get('course_type', getattr(self.instance, 'course_type', 'theory')) or 'theory').strip().lower()
+        if 'lab' in raw_type:
+            course_type = Course.CourseType.LAB
+        elif 'sessional' in raw_type:
+            course_type = Course.CourseType.SESSIONAL
+        elif 'tutorial' in raw_type:
+            course_type = Course.CourseType.TUTORIAL
+        else:
+            course_type = Course.CourseType.THEORY
+        attrs['course_type'] = course_type
+
+        credit = attrs.get('credit', getattr(self.instance, 'credit', 3))
         if credit <= 0:
             raise serializers.ValidationError({'credit': 'Course credit must be greater than 0.'})
+
         if course_type != Course.CourseType.THEORY:
             attrs['assessment_applicable'] = False
             attrs['best_assessment_count'] = 0
         else:
-            attrs.setdefault('assessment_applicable', True)
-            attrs['best_assessment_count'] = int(credit)
+            attrs['assessment_applicable'] = True
+            attrs['best_assessment_count'] = max(1, int(round(float(credit))))
         return attrs
 
     @transaction.atomic
@@ -218,24 +282,66 @@ class CourseSerializer(UserOwnedModelSerializer):
         history = validated_data.pop('history', [])
         assessments = validated_data.pop('assessments', [])
         course = super().create(validated_data)
-        sync_nested(course, 'history', AttendanceRecord, history, 'course')
-        sync_nested(course, 'assessments', CourseAssessment, assessments, 'course')
         if history:
+            sync_nested(course, 'history', AttendanceRecord, history, 'course')
             course.missed_classes = course.history.filter(status=AttendanceRecord.Status.MISSED).count()
-            course.save(update_fields=['missed_classes', 'updated_at'])
+            course.attended_classes = course.history.filter(status=AttendanceRecord.Status.ATTENDED).count()
+            course.total_classes = course.missed_classes + course.attended_classes
+            course.save(update_fields=['missed_classes', 'attended_classes', 'total_classes', 'updated_at'])
+        if assessments:
+            sync_nested(course, 'assessments', CourseAssessment, assessments, 'course')
         return course
 
     @transaction.atomic
     def update(self, instance, validated_data):
+        from django.db.models import Q
+        old_course_id = instance.course_id
         history = validated_data.pop('history', None)
         assessments = validated_data.pop('assessments', None)
         course = super().update(instance, validated_data)
+
+        # 1. Automate sync with Routine slots
+        routines = Routine.objects.filter(
+            Q(user=course.user) & (Q(course=course) | Q(course_code__iexact=old_course_id))
+        )
+        routine_class_type = (
+            Routine.ClassType.LAB if course.course_type == Course.CourseType.LAB
+            else Routine.ClassType.SESSIONAL if course.course_type == Course.CourseType.SESSIONAL
+            else Routine.ClassType.THEORY
+        )
+        routines.update(
+            course=course,
+            course_code=course.course_id,
+            course_title=course.course_title,
+            credit=course.credit,
+            course_type=course.course_type,
+            class_type=routine_class_type,
+            faculty=course.faculty,
+            teacher_name=course.faculty,
+            color=course.color,
+        )
+
+        # 2. Automate attendance records sync
         if history is not None:
             sync_nested(course, 'history', AttendanceRecord, history, 'course')
             course.missed_classes = course.history.filter(status=AttendanceRecord.Status.MISSED).count()
-            course.save(update_fields=['missed_classes', 'updated_at'])
+            course.attended_classes = course.history.filter(status=AttendanceRecord.Status.ATTENDED).count()
+            course.total_classes = course.missed_classes + course.attended_classes
+            course.save(update_fields=['missed_classes', 'attended_classes', 'total_classes', 'updated_at'])
+
+        # 3. Automate CT marks / assessments sync
         if assessments is not None:
             sync_nested(course, 'assessments', CourseAssessment, assessments, 'course')
+
+        # 4. Automate assessment applicability and best count if credit or course_type changed
+        if course.course_type == Course.CourseType.THEORY:
+            course.assessment_applicable = True
+            course.best_assessment_count = max(1, int(round(float(course.credit))))
+        else:
+            course.assessment_applicable = False
+            course.best_assessment_count = 0
+        course.save(update_fields=['assessment_applicable', 'best_assessment_count', 'updated_at'])
+
         return course
 
 
@@ -244,11 +350,27 @@ class CourseLinkedSerializer(UserOwnedModelSerializer):
         user = self._request_user()
         course_code = validated_data.get('course_code')
         if course_code:
-            validated_data['course'] = (
-                Course.objects.filter(user=user, course_id=course_code)
+            course = (
+                Course.objects.filter(user=user, course_id__iexact=course_code)
                 .order_by('-created_at')
                 .first()
             )
+            if not course:
+                credit = validated_data.get('credit', 3) or 3
+                course_type = validated_data.get('course_type', 'theory') or 'theory'
+                is_theory = str(course_type).lower() == 'theory'
+                course = Course.objects.create(
+                    user=user,
+                    course_id=course_code,
+                    course_title=validated_data.get('course_title', course_code),
+                    credit=credit,
+                    course_type=course_type,
+                    faculty=validated_data.get('faculty') or validated_data.get('teacher_name', ''),
+                    color=validated_data.get('color', '#4F46E5') or '#4F46E5',
+                    assessment_applicable=is_theory,
+                    best_assessment_count=max(1, int(round(float(credit)))) if is_theory else 0,
+                )
+            validated_data['course'] = course
         return validated_data
 
     def create(self, validated_data):
@@ -509,7 +631,10 @@ class SemesterCourseSerializer(UserOwnedModelSerializer):
         grade_point = attrs.get('grade_point', getattr(self.instance, 'grade_point', 0))
         attrs.setdefault('quality_points', credit * grade_point)
         letter_grade = attrs.get('letter_grade', getattr(self.instance, 'letter_grade', ''))
-        if letter_grade == 'F':
+        is_repeated = attrs.get('is_repeated', getattr(self.instance, 'is_repeated', False))
+        if is_repeated:
+            attrs['status'] = SemesterCourse.Status.REPEATED
+        elif letter_grade == 'F':
             attrs['status'] = SemesterCourse.Status.FAILED
         return attrs
 

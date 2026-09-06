@@ -92,8 +92,14 @@ const fetchResultWithBrowser = async ({ loginUrl, cookie, csrfToken, studentId, 
     });
     if (initialCookies.length) await context.addCookies(initialCookies);
     const page = await context.newPage();
-      // Keep the CAPTCHA generated for the image shown in StudySync.
-      await page.route('**/captcha.php', route => route.abort());
+    let dialogMessage = '';
+    page.on('dialog', async dialog => {
+      dialogMessage = dialog.message();
+      await dialog.accept().catch(() => {});
+    });
+
+    // Keep the CAPTCHA generated for the image shown in StudySync.
+    await page.route('**/captcha.php', route => route.abort());
     await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
     if (csrfToken) {
       const csrfInput = page.locator('input[name="csrf_token"]');
@@ -103,13 +109,19 @@ const fetchResultWithBrowser = async ({ loginUrl, cookie, csrfToken, studentId, 
     await page.locator('#user_password, input[name="user_password"]').first().fill(password);
     await page.locator('input[name="captcha"]').first().fill(captcha);
     await Promise.all([
-      page.waitForLoadState('domcontentloaded').catch(() => {}),
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
       page.locator('button[type="submit"], input[type="submit"]').first().click()
     ]);
-    if (signal?.aborted) throw new Error('Request was cancelled.');
-    const htmlContent = await page.content();
+    let htmlContent = await page.content();
+    if (!hasResultRows(htmlContent)) {
+      try {
+        await page.goto('https://course.cuet.ac.bd/result_published.php', { waitUntil: 'domcontentloaded', timeout: 10000 });
+        await page.waitForTimeout(1000);
+        htmlContent = await page.content();
+      } catch {}
+    }
     await context.close();
-    return htmlContent;
+    return { htmlContent, dialogMessage };
   } finally {
     await browser.close().catch(() => {});
   }
@@ -186,7 +198,7 @@ const cuetProxyPlugin = () => ({
               return;
             }
 
-            const htmlContent = await fetchResultWithBrowser(
+            const { htmlContent, dialogMessage } = await fetchResultWithBrowser(
               {
                 loginUrl: CUET_LOGIN_URL,
                 cookie,
@@ -200,7 +212,17 @@ const cuetProxyPlugin = () => ({
 
             clearTimeout(timeoutId);
 
-            if (!hasResultRows(htmlContent) && hasLoginForm(htmlContent)) {
+            if (dialogMessage) {
+              res.statusCode = 401;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({
+                error: 'Portal Verification Notice',
+                message: `CUET Portal alert: ${dialogMessage}`
+              }));
+              return;
+            }
+
+            if (!hasResultRows(htmlContent) && (hasLoginForm(htmlContent) || /user_email|user_password/i.test(htmlContent))) {
               res.statusCode = 401;
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({
