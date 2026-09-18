@@ -10,6 +10,8 @@ from rest_framework.test import APITestCase
 from .gemini_routine import ExtractedClass, ExtractedSchedule, merge_contiguous_classes
 from .models import (
     AcademicResult,
+    AssessmentAttachment,
+    AssessmentEvent,
     AttendanceRecord,
     Course,
     CourseAssessment,
@@ -870,5 +872,226 @@ class AcademicResultImportApiTests(RoutineApiTests):
         self.assertFalse(AcademicResult.objects.exists())
         self.assertFalse(Semester.objects.exists())
         self.assertFalse(SemesterCourse.objects.exists())
+
+
+@override_settings(
+    SUPABASE_JWT_SECRET='test-only-supabase-secret-with-sufficient-length',
+    SUPABASE_JWT_ISSUER='https://test-project.supabase.co/auth/v1',
+    SUPABASE_JWT_AUDIENCE='authenticated',
+    SUPABASE_JWT_ALGORITHMS=('HS256',),
+)
+class AssessmentApiTests(APITestCase):
+    def make_token(self, email='student@example.com', subject='11111111-1111-4111-8111-111111111111'):
+        now = datetime.now(timezone.utc)
+        return jwt.encode(
+            {
+                'iss': 'https://test-project.supabase.co/auth/v1',
+                'aud': 'authenticated',
+                'sub': subject,
+                'email': email,
+                'role': 'authenticated',
+                'iat': now,
+                'exp': now + timedelta(minutes=5),
+                'app_metadata': {'provider': 'google'},
+                'user_metadata': {'full_name': 'Assessment Student'},
+            },
+            'test-only-supabase-secret-with-sufficient-length',
+            algorithm='HS256',
+        )
+
+    def authenticate(self, **kwargs):
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f'Bearer {self.make_token(**kwargs)}'
+        )
+
+    def test_assessment_endpoints_require_authentication(self):
+        response = self.client.get('/api/v1/academics/assessments/')
+        self.assertEqual(response.status_code, 401)
+
+    def test_create_and_list_assessment(self):
+        self.authenticate()
+        payload = {
+            'type': 'CT',
+            'title': 'CT 1 - Database Systems',
+            'courseId': 'CSE 3201',
+            'courseTitle': 'Database Systems',
+            'date': '2026-10-15',
+            'startTime': '10:00:00',
+            'endTime': '11:00:00',
+            'syllabus': 'Chapters 1 to 3',
+            'marks': 20,
+            'priority': 'high',
+            'reminderTime': '24h',
+            'notes': 'Bring calculator',
+        }
+        res = self.client.post('/api/v1/academics/assessments/', payload, format='json')
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data['title'], 'CT 1 - Database Systems')
+        self.assertEqual(res.data['courseId'], 'CSE 3201')
+        self.assertIsNone(res.data['calendarStatus'])
+
+        # List assessments
+        list_res = self.client.get('/api/v1/academics/assessments/')
+        self.assertEqual(list_res.status_code, 200)
+        self.assertEqual(len(list_res.data), 1)
+        self.assertEqual(list_res.data[0]['title'], 'CT 1 - Database Systems')
+
+    @patch('academics.views.create_calendar_event')
+    def test_create_assessment_with_google_calendar(self, mocked_create_cal):
+        mocked_create_cal.return_value = ('cal-event-123', 'https://calendar.google.com/event-123')
+        self.authenticate()
+
+        payload = {
+            'type': 'CT',
+            'title': 'CT 2 - Algorithms',
+            'courseId': 'CSE 2201',
+            'courseTitle': 'Algorithms',
+            'date': '2026-10-20',
+            'startTime': '09:00:00',
+            'endTime': '10:00:00',
+            'syllabus': 'Graph algorithms',
+            'marks': 25,
+            'priority': 'medium',
+            'reminderTime': '1h',
+        }
+        res = self.client.post(
+            '/api/v1/academics/assessments/',
+            payload,
+            format='json',
+            HTTP_X_GOOGLE_TOKEN='valid-mock-token',
+        )
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data['calendarStatus'], 'created')
+        self.assertEqual(res.data['googleCalendarEventId'], 'cal-event-123')
+        self.assertEqual(res.data['googleCalendarEventUrl'], 'https://calendar.google.com/event-123')
+        mocked_create_cal.assert_called_once()
+
+    @patch('academics.views.update_calendar_event')
+    def test_update_assessment(self, mocked_update_cal):
+        mocked_update_cal.return_value = ('cal-event-123', 'https://calendar.google.com/event-123-updated')
+        self.authenticate()
+        user = self.client.get('/api/v1/auth/me/').wsgi_request.user
+
+        event = AssessmentEvent.objects.create(
+            user=user,
+            title='Old Title',
+            course_code='CSE 101',
+            assessment_type='CT',
+            date='2026-10-10',
+            start_time='10:00:00',
+            end_time='11:00:00',
+            syllabus='Chapter 1',
+            google_calendar_event_id='cal-event-123',
+        )
+
+        patch_res = self.client.patch(
+            f'/api/v1/academics/assessments/{event.pk}/',
+            {'title': 'Updated Title'},
+            format='json',
+            HTTP_X_GOOGLE_TOKEN='valid-mock-token',
+        )
+        self.assertEqual(patch_res.status_code, 200)
+        self.assertEqual(patch_res.data['title'], 'Updated Title')
+        self.assertEqual(patch_res.data['calendarStatus'], 'updated')
+
+    @patch('academics.views.delete_calendar_event')
+    def test_delete_assessment(self, mocked_delete_cal):
+        self.authenticate()
+        user = self.client.get('/api/v1/auth/me/').wsgi_request.user
+        event = AssessmentEvent.objects.create(
+            user=user,
+            title='To Delete',
+            course_code='CSE 101',
+            assessment_type='CT',
+            google_calendar_event_id='cal-event-to-delete',
+        )
+
+        del_res = self.client.delete(
+            f'/api/v1/academics/assessments/{event.pk}/',
+            HTTP_X_GOOGLE_TOKEN='valid-mock-token',
+        )
+        self.assertEqual(del_res.status_code, 200)
+        self.assertFalse(AssessmentEvent.objects.filter(pk=event.pk).exists())
+        mocked_delete_cal.assert_called_once_with('valid-mock-token', 'cal-event-to-delete')
+
+    @patch('academics.views.upload_to_drive')
+    def test_attachment_upload_and_delete(self, mocked_upload_drive):
+        mocked_upload_drive.return_value = ('drive-file-abc', 'https://drive.google.com/file-abc')
+        self.authenticate()
+        user = self.client.get('/api/v1/auth/me/').wsgi_request.user
+
+        event = AssessmentEvent.objects.create(
+            user=user,
+            title='Assignment with File',
+            course_code='CSE 3100',
+            assessment_type='assignment',
+        )
+
+        test_file = SimpleUploadedFile('document.pdf', b'%PDF-1.4 test content', content_type='application/pdf')
+        upload_res = self.client.post(
+            f'/api/v1/academics/assessments/{event.pk}/attachments/',
+            {'file': test_file},
+            format='multipart',
+            HTTP_X_GOOGLE_TOKEN='valid-mock-token',
+        )
+        self.assertEqual(upload_res.status_code, 201)
+        self.assertEqual(upload_res.data['name'], 'document.pdf')
+        self.assertEqual(upload_res.data['googleDriveFileId'], 'drive-file-abc')
+        self.assertEqual(upload_res.data['driveStatus'], 'uploaded')
+
+        attachment_id = upload_res.data['id']
+
+        # Delete attachment
+        with patch('academics.views.delete_drive_file') as mocked_del_drive:
+            del_res = self.client.delete(
+                f'/api/v1/academics/attachments/{attachment_id}/',
+                HTTP_X_GOOGLE_TOKEN='valid-mock-token',
+            )
+            self.assertEqual(del_res.status_code, 200)
+            mocked_del_drive.assert_called_once_with('valid-mock-token', 'drive-file-abc')
+            self.assertFalse(AssessmentAttachment.objects.filter(pk=attachment_id).exists())
+
+    def test_calendar_connect_status(self):
+        self.authenticate()
+        res = self.client.get('/api/v1/academics/google/calendar/connect/')
+        self.assertEqual(res.status_code, 200)
+        self.assertIn('configured', res.data)
+        self.assertIn('hasToken', res.data)
+        self.assertIn('scopes', res.data)
+
+    @patch('academics.views.upload_to_drive')
+    def test_attachment_sync_drive(self, mocked_upload_drive):
+        mocked_upload_drive.return_value = ('drive-synced-123', 'https://drive.google.com/synced-123')
+        self.authenticate()
+        user = self.client.get('/api/v1/auth/me/').wsgi_request.user
+
+        event = AssessmentEvent.objects.create(
+            user=user,
+            title='Assignment to Sync',
+            course_code='CSE 3100',
+            assessment_type='assignment',
+        )
+
+        # Upload without token first
+        test_file = SimpleUploadedFile('document2.pdf', b'%PDF-1.4 test content 2', content_type='application/pdf')
+        upload_res = self.client.post(
+            f'/api/v1/academics/assessments/{event.pk}/attachments/',
+            {'file': test_file},
+            format='multipart',
+        )
+        self.assertEqual(upload_res.status_code, 201)
+        self.assertEqual(upload_res.data['driveStatus'], 'not_connected')
+        att_id = upload_res.data['id']
+
+        # Now sync to drive with token
+        sync_res = self.client.post(
+            f'/api/v1/academics/attachments/{att_id}/sync-drive/',
+            HTTP_X_GOOGLE_TOKEN='valid-mock-token',
+        )
+        self.assertEqual(sync_res.status_code, 200)
+        self.assertEqual(sync_res.data['googleDriveFileId'], 'drive-synced-123')
+        self.assertEqual(sync_res.data['driveStatus'], 'uploaded')
+
+
 
 

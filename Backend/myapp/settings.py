@@ -135,6 +135,7 @@ ROUTINE_IMAGE_MAX_BYTES = int(
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
 GOOGLE_CALENDAR_SCOPES = os.getenv('GOOGLE_CALENDAR_SCOPES', 'https://www.googleapis.com/auth/calendar.events')
+GOOGLE_DRIVE_SCOPES = os.getenv('GOOGLE_DRIVE_SCOPES', 'https://www.googleapis.com/auth/drive.file')
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -152,6 +153,12 @@ CORS_ALLOWED_ORIGINS = [
         'http://localhost:3000,http://127.0.0.1:3000',
     ).split(',')
     if origin.strip()
+]
+
+from corsheaders.defaults import default_headers
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'x-google-token',
 ]
 
 
@@ -226,6 +233,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# Media files (User uploads, attachments)
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 
 # Email

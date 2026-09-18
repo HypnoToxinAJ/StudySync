@@ -460,10 +460,21 @@ class RoutineSerializer(CourseLinkedSerializer):
 
 class AssessmentAttachmentSerializer(UserOwnedModelSerializer):
     type = serializers.CharField(source='mime_type', required=False, allow_blank=True)
+    storagePath = serializers.CharField(source='storage_path', required=False, allow_blank=True)
+    googleDriveFileId = serializers.CharField(
+        source='google_drive_file_id', read_only=True
+    )
+    googleDriveFileUrl = serializers.URLField(
+        source='google_drive_file_url', read_only=True
+    )
 
     class Meta:
         model = AssessmentAttachment
-        fields = ['id', 'name', 'size', 'type', 'createdAt', 'updatedAt']
+        fields = [
+            'id', 'name', 'size', 'type', 'storagePath',
+            'googleDriveFileId', 'googleDriveFileUrl',
+            'createdAt', 'updatedAt',
+        ]
 
 
 class AssessmentLinkSerializer(UserOwnedModelSerializer):
@@ -493,6 +504,12 @@ class AssessmentEventSerializer(CourseLinkedSerializer):
     reminderTime = serializers.CharField(source='reminder_time')
     attachments = AssessmentAttachmentSerializer(many=True, required=False)
     links = AssessmentLinkSerializer(many=True, required=False)
+    googleCalendarEventId = serializers.CharField(
+        source='google_calendar_event_id', read_only=True
+    )
+    googleCalendarEventUrl = serializers.URLField(
+        source='google_calendar_event_url', read_only=True
+    )
 
     class Meta:
         model = AssessmentEvent
@@ -519,6 +536,8 @@ class AssessmentEventSerializer(CourseLinkedSerializer):
             'notes',
             'attachments',
             'links',
+            'googleCalendarEventId',
+            'googleCalendarEventUrl',
             'createdAt',
             'updatedAt',
         ]

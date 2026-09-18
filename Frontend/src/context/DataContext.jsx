@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { storageService } from '../services/storageService';
 import { routineService } from '../services/routineService';
 import { routineApi } from '../services/routineApi';
+import { assessmentApi } from '../services/assessmentApi';
 import { attendanceService } from '../services/attendanceService';
 import { marksService } from '../services/marksService';
 import { cgpaService } from '../services/cgpaService';
@@ -11,11 +12,13 @@ import { shortcutService } from '../services/shortcutService';
 import { focusService } from '../services/focusService';
 import { alertService } from '../services/alertService';
 import { useToast } from './ToastContext';
+import { useAuth } from './AuthContext';
 
 const DataContext = createContext();
 
 export const DataProvider = ({ children }) => {
   const { showToast } = useToast();
+  const { providerToken } = useAuth();
 
   const [courses, setCourses] = useState([]);
   const [routines, setRoutines] = useState([]);
@@ -267,42 +270,119 @@ export const DataProvider = ({ children }) => {
     storageService.set(storageService.KEYS.TASKS, tasksList);
   };
 
-  const addAssessment = (assessmentData) => {
+  const addAssessment = async (assessmentData) => {
+    // Local-first: save immediately
     const list = storageService.get(storageService.KEYS.ASSESSMENTS, []);
-    const newAst = { id: `ev-${Date.now()}`, ...assessmentData };
+    const localId = `ev-${Date.now()}`;
+    const newAst = { id: localId, ...assessmentData };
     list.push(newAst);
     storageService.set(storageService.KEYS.ASSESSMENTS, list);
     syncAssessmentTask(newAst);
 
-    // Also sync to course if courseId matches
     if (assessmentData.courseId) {
       marksService.addAssessmentToCourse(assessmentData.courseId, newAst);
     }
 
     refreshData();
-    showToast(`New ${assessmentData.type.toUpperCase()} scheduled!`);
+
+    // Backend sync with Google Calendar integration
+    try {
+      const result = await assessmentApi.create(assessmentData, providerToken);
+      // Update local record with server ID and Google data
+      const updatedList = storageService.get(storageService.KEYS.ASSESSMENTS, []);
+      const idx = updatedList.findIndex(a => a.id === localId);
+      let finalRecord = { ...newAst, ...result, id: result.id || localId };
+      if (idx !== -1) {
+        updatedList[idx] = finalRecord;
+        storageService.set(storageService.KEYS.ASSESSMENTS, updatedList);
+      }
+      refreshData();
+
+      const calendarMsg = result.calendarStatus === 'created'
+        ? ' and added to your Google Calendar'
+        : result.calendarStatus?.startsWith('failed')
+          ? ' (Calendar sync failed — you can retry later)'
+          : '';
+      showToast(`${assessmentData.type?.toUpperCase() || 'Assessment'} scheduled successfully${calendarMsg}!`);
+      return finalRecord;
+    } catch (error) {
+      showToast(
+        error.message || 'Assessment saved locally but could not reach the server.',
+        'warning'
+      );
+      return newAst;
+    }
   };
 
-  const updateAssessment = (id, updatedData) => {
+  const updateAssessment = async (id, updatedData) => {
+    // Local-first update
     const list = storageService.get(storageService.KEYS.ASSESSMENTS, []);
     const idx = list.findIndex(a => a.id === id);
+    let updatedRecord = { id, ...updatedData };
     if (idx !== -1) {
-      list[idx] = { ...list[idx], ...updatedData };
+      updatedRecord = { ...list[idx], ...updatedData };
+      list[idx] = updatedRecord;
       storageService.set(storageService.KEYS.ASSESSMENTS, list);
       syncAssessmentTask(list[idx]);
     }
     refreshData();
-    showToast('Assessment updated!');
+
+    // Backend sync
+    try {
+      const result = await assessmentApi.update(id, updatedData, providerToken);
+      // Merge server response
+      const currentList = storageService.get(storageService.KEYS.ASSESSMENTS, []);
+      const currentIdx = currentList.findIndex(a => a.id === id);
+      if (currentIdx !== -1) {
+        currentList[currentIdx] = { ...currentList[currentIdx], ...result };
+        updatedRecord = currentList[currentIdx];
+        storageService.set(storageService.KEYS.ASSESSMENTS, currentList);
+      }
+      refreshData();
+
+      const calendarMsg = result.calendarStatus === 'updated'
+        ? ' Google Calendar event updated.'
+        : result.calendarStatus === 'created'
+          ? ' Google Calendar event created.'
+          : '';
+      showToast(`Assessment updated!${calendarMsg}`);
+      return updatedRecord;
+    } catch (error) {
+      showToast(
+        error.message || 'Update saved locally but could not reach the server.',
+        'warning'
+      );
+      return updatedRecord;
+    }
   };
 
-  const deleteAssessment = (id) => {
+  const deleteAssessment = async (id) => {
+    // Local-first delete
     const list = storageService.get(storageService.KEYS.ASSESSMENTS, []);
     const filtered = list.filter(a => a.id !== id);
     storageService.set(storageService.KEYS.ASSESSMENTS, filtered);
     const tasksList = storageService.get(storageService.KEYS.TASKS, []);
     storageService.set(storageService.KEYS.TASKS, tasksList.filter(task => task.id !== `task-assessment-${id}`));
     refreshData();
-    showToast('Assessment deleted.');
+
+    // Backend sync (also deletes Calendar event and Drive files)
+    try {
+      const result = await assessmentApi.delete(id, providerToken);
+      if (result?.googleErrors?.length) {
+        showToast('Assessment deleted, but some Google resources could not be cleaned up.', 'warning');
+      } else {
+        showToast('Assessment deleted.');
+      }
+    } catch (error) {
+      if (error.status !== 404) {
+        showToast(
+          error.message || 'Deleted locally but could not reach the server.',
+          'warning'
+        );
+      } else {
+        showToast('Assessment deleted.');
+      }
+    }
   };
 
   // --- CGPA / Semester Handlers ---

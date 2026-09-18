@@ -10,6 +10,7 @@ import { storageService } from '../services/storageService';
 import { setCurrentSession } from '../services/api';
 import { apiClient } from '../services/apiClient';
 import { supabase } from '../services/supabaseClient';
+import { assessmentApi } from '../services/assessmentApi';
 
 const AuthContext = createContext(null);
 
@@ -47,17 +48,93 @@ const throwIfError = error => {
   if (error) throw new Error(error.message || 'Authentication failed.', { cause: error });
 };
 
+const GOOGLE_EXTRA_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/drive.file',
+].join(' ');
+
 export const AuthProvider = ({ children }) => {
   const [user, setUserState] = useState(null);
   const [session, setSession] = useState(null);
+  const [providerToken, setProviderToken] = useState(() => {
+    try {
+      return sessionStorage.getItem('studysync_google_provider_token') || null;
+    } catch {
+      return null;
+    }
+  });
+  const [googleServicesGranted, setGoogleServicesGranted] = useState(() => {
+    try {
+      return sessionStorage.getItem('studysync_google_services_granted') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [loading, setLoading] = useState(true);
   const lastAppliedTokenRef = useRef(null);
   const isHydratingUserRef = useRef(false);
+
+  const verifyGoogleServices = useCallback(async (tokenToCheck) => {
+    const token = tokenToCheck || providerToken;
+    if (!token) {
+      setGoogleServicesGranted(false);
+      try { sessionStorage.removeItem('studysync_google_services_granted'); } catch {}
+      return false;
+    }
+    try {
+      const status = await assessmentApi.checkGoogleStatus(token);
+      const isConnected = Boolean(status?.connected && status?.hasCalendar && status?.hasDrive);
+      setGoogleServicesGranted(isConnected);
+      try {
+        if (isConnected) {
+          sessionStorage.setItem('studysync_google_services_granted', 'true');
+        } else {
+          sessionStorage.removeItem('studysync_google_services_granted');
+        }
+      } catch {}
+      return isConnected;
+    } catch (err) {
+      console.warn('Google services verification check failed:', err);
+      return false;
+    }
+  }, [providerToken]);
 
   const applySession = useCallback(async nextSession => {
     const token = nextSession?.access_token || null;
     setCurrentSession(nextSession);
     setSession(nextSession);
+    // Capture the Google provider token when available (only present right after OAuth)
+    if (nextSession?.provider_token) {
+      setProviderToken(nextSession.provider_token);
+      try {
+        sessionStorage.setItem('studysync_google_provider_token', nextSession.provider_token);
+      } catch {}
+
+      const wasRequesting = sessionStorage.getItem('studysync_requesting_google_services') === 'true';
+      if (wasRequesting) {
+        sessionStorage.setItem('studysync_google_services_granted', 'true');
+        sessionStorage.removeItem('studysync_requesting_google_services');
+        setGoogleServicesGranted(true);
+      } else {
+        // Asynchronously verify scopes of newly received token
+        assessmentApi.checkGoogleStatus(nextSession.provider_token).then(status => {
+          const isConnected = Boolean(status?.connected && status?.hasCalendar && status?.hasDrive);
+          setGoogleServicesGranted(isConnected);
+          try {
+            if (isConnected) {
+              sessionStorage.setItem('studysync_google_services_granted', 'true');
+            } else {
+              sessionStorage.removeItem('studysync_google_services_granted');
+            }
+          } catch {}
+        }).catch(() => {});
+      }
+    } else {
+      const cached = sessionStorage.getItem('studysync_google_provider_token');
+      if (cached) {
+        setProviderToken(cached);
+      }
+    }
     let nextUser = toStudySyncUser(nextSession?.user);
 
     if (!nextSession?.user) {
@@ -157,6 +234,12 @@ export const AuthProvider = ({ children }) => {
     return () => globalThis.removeEventListener('studysync:profile-synced', updateProfile);
   }, []);
 
+  useEffect(() => {
+    if (providerToken && !googleServicesGranted) {
+      verifyGoogleServices(providerToken);
+    }
+  }, [providerToken, googleServicesGranted, verifyGoogleServices]);
+
   const login = async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     throwIfError(error);
@@ -164,15 +247,30 @@ export const AuthProvider = ({ children }) => {
   };
 
   const loginWithGoogle = async (customOptions = {}) => {
+    const { includeGoogleServices = false, ...restOptions } = customOptions;
+    if (includeGoogleServices) {
+      try {
+        sessionStorage.setItem('studysync_requesting_google_services', 'true');
+      } catch {}
+    }
+    const options = {
+      redirectTo: oauthRedirectUrl(),
+      ...(includeGoogleServices ? {
+        scopes: GOOGLE_EXTRA_SCOPES,
+        queryParams: { access_type: 'offline', prompt: 'consent' }
+      } : {}),
+      ...restOptions
+    };
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: oauthRedirectUrl(),
-        ...customOptions
-      }
+      options
     });
     throwIfError(error);
     return data;
+  };
+
+  const connectGoogleServices = async () => {
+    return loginWithGoogle({ includeGoogleServices: true });
   };
 
   const register = async userData => {
@@ -228,6 +326,13 @@ export const AuthProvider = ({ children }) => {
     throwIfError(error);
     setSession(null);
     setUserState(null);
+    setProviderToken(null);
+    setGoogleServicesGranted(false);
+    try {
+      sessionStorage.removeItem('studysync_google_provider_token');
+      sessionStorage.removeItem('studysync_google_services_granted');
+      sessionStorage.removeItem('studysync_requesting_google_services');
+    } catch {}
     storageService.clearWorkspaceCache();
     localStorage.removeItem(storageService.KEYS.USER);
   };
@@ -250,9 +355,15 @@ export const AuthProvider = ({ children }) => {
     <AuthContext.Provider value={{
       user,
       session,
+      providerToken,
+      hasGoogleServices: Boolean(providerToken && googleServicesGranted),
+      isGoogleConnected: Boolean(providerToken && googleServicesGranted),
+      googleServicesGranted,
+      verifyGoogleServices,
       loading,
       login,
       loginWithGoogle,
+      connectGoogleServices,
       register,
       completeOnboarding,
       logout,

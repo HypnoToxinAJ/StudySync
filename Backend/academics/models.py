@@ -279,6 +279,8 @@ class AssessmentEvent(UserOwnedModel):
     priority = models.CharField(max_length=8, choices=Priority.choices, default=Priority.MEDIUM)
     reminder_time = models.CharField(max_length=20, default='24h')
     notes = models.TextField(blank=True)
+    google_calendar_event_id = models.CharField(max_length=1024, blank=True)
+    google_calendar_event_url = models.URLField(max_length=2048, blank=True)
 
     class Meta:
         ordering = ['date', 'deadline_date', 'start_time']
@@ -307,6 +309,8 @@ class AssessmentAttachment(UserOwnedModel):
     size = models.CharField(max_length=40, blank=True)
     mime_type = models.CharField(max_length=255, blank=True)
     storage_path = models.CharField(max_length=1024, blank=True)
+    google_drive_file_id = models.CharField(max_length=1024, blank=True)
+    google_drive_file_url = models.URLField(max_length=2048, blank=True)
 
     class Meta:
         ordering = ['created_at']

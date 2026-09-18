@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import re
 import urllib.error
 import urllib.request
@@ -1072,3 +1073,551 @@ class AcademicResultImportView(APIView):
             logger.warning('Failed to update SyncDocument on result import: %s', e)
 
         return Response(serializer.data, status=status.HTTP_200_OK if existing else status.HTTP_201_CREATED)
+
+
+# ---------------------------------------------------------------------------
+# Assessment CRUD with Google Calendar & Drive integration
+# ---------------------------------------------------------------------------
+
+from .google_services import (
+    GoogleAPIError,
+    GooglePermissionDeniedError,
+    GoogleQuotaError,
+    GoogleTokenExpiredError,
+    create_calendar_event,
+    delete_calendar_event,
+    delete_drive_file,
+    get_token_scopes,
+    update_calendar_event,
+    upload_to_drive,
+)
+from .models import AssessmentAttachment, AssessmentEvent, AssessmentLink
+from .serializers import AssessmentAttachmentSerializer, AssessmentEventSerializer
+
+
+ASSESSMENT_MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024  # 25 MB
+ASSESSMENT_ALLOWED_MIME_TYPES = {
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'image/jpeg',
+    'image/png',
+    'image/webp',
+    'image/gif',
+    'text/plain',
+}
+
+
+def _get_google_token(request):
+    """Extract the Google access token from the request (header or body)."""
+    return (
+        request.headers.get('X-Google-Token')
+        or (request.data.get('google_access_token') if hasattr(request, 'data') else None)
+        or ''
+    ).strip() or None
+
+
+def _google_error_response(exc):
+    """Convert a GoogleAPIError into a DRF Response."""
+    if isinstance(exc, GoogleTokenExpiredError):
+        return Response(
+            {'detail': str(exc), 'code': 'google_token_expired'},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+    if isinstance(exc, GooglePermissionDeniedError):
+        return Response(
+            {'detail': str(exc), 'code': 'google_permission_denied'},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    if isinstance(exc, GoogleQuotaError):
+        return Response(
+            {'detail': str(exc), 'code': 'google_quota_exceeded'},
+            status=status.HTTP_429_TOO_MANY_REQUESTS,
+        )
+    return Response(
+        {'detail': str(exc), 'code': 'google_api_error'},
+        status=status.HTTP_502_BAD_GATEWAY,
+    )
+
+
+class AssessmentListCreateView(APIView):
+    """List all assessments for the authenticated user, or create a new one."""
+
+    def get(self, request):
+        assessments = (
+            AssessmentEvent.objects.filter(user=request.user)
+            .prefetch_related('attachments', 'links')
+            .order_by('-date', '-deadline_date', '-created_at')
+        )
+        serializer = AssessmentEventSerializer(
+            assessments, many=True, context={'request': request}
+        )
+        return Response(serializer.data)
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = AssessmentEventSerializer(
+            data=request.data, context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        assessment = serializer.save()
+
+        # Google Calendar integration
+        google_token = _get_google_token(request)
+        calendar_status = None
+        if google_token:
+            try:
+                event_id, event_url = create_calendar_event(google_token, assessment)
+                if event_id:
+                    assessment.google_calendar_event_id = event_id
+                    assessment.google_calendar_event_url = event_url or ''
+                    assessment.save(update_fields=[
+                        'google_calendar_event_id',
+                        'google_calendar_event_url',
+                        'updated_at',
+                    ])
+                    calendar_status = 'created'
+            except GoogleAPIError as exc:
+                logger.warning(
+                    'Google Calendar event creation failed for assessment %s: %s',
+                    assessment.pk, exc,
+                )
+                calendar_status = f'failed: {exc}'
+
+        # Re-serialize with updated Google fields
+        result = AssessmentEventSerializer(assessment, context={'request': request}).data
+        result['calendarStatus'] = calendar_status
+        return Response(result, status=status.HTTP_201_CREATED)
+
+
+class AssessmentDetailView(APIView):
+    """Retrieve, update, or delete a specific assessment."""
+
+    def _get_assessment(self, request, pk):
+        try:
+            return AssessmentEvent.objects.prefetch_related(
+                'attachments', 'links'
+            ).get(pk=pk, user=request.user)
+        except AssessmentEvent.DoesNotExist:
+            return None
+
+    def get(self, request, pk):
+        assessment = self._get_assessment(request, pk)
+        if not assessment:
+            return Response(
+                {'detail': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AssessmentEventSerializer(assessment, context={'request': request})
+        return Response(serializer.data)
+
+    @transaction.atomic
+    def patch(self, request, pk):
+        assessment = self._get_assessment(request, pk)
+        if not assessment:
+            return Response(
+                {'detail': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = AssessmentEventSerializer(
+            assessment, data=request.data, partial=True, context={'request': request}
+        )
+        serializer.is_valid(raise_exception=True)
+        assessment = serializer.save()
+
+        # Update Google Calendar event if it exists
+        google_token = _get_google_token(request)
+        calendar_status = None
+        if google_token and assessment.google_calendar_event_id:
+            try:
+                event_id, event_url = update_calendar_event(
+                    google_token, assessment.google_calendar_event_id, assessment
+                )
+                if event_url:
+                    assessment.google_calendar_event_url = event_url
+                    assessment.save(update_fields=['google_calendar_event_url', 'updated_at'])
+                calendar_status = 'updated'
+            except GoogleAPIError as exc:
+                logger.warning(
+                    'Google Calendar event update failed for assessment %s: %s',
+                    assessment.pk, exc,
+                )
+                calendar_status = f'failed: {exc}'
+        elif google_token and not assessment.google_calendar_event_id:
+            # Event was never created; try now
+            try:
+                event_id, event_url = create_calendar_event(google_token, assessment)
+                if event_id:
+                    assessment.google_calendar_event_id = event_id
+                    assessment.google_calendar_event_url = event_url or ''
+                    assessment.save(update_fields=[
+                        'google_calendar_event_id',
+                        'google_calendar_event_url',
+                        'updated_at',
+                    ])
+                    calendar_status = 'created'
+            except GoogleAPIError as exc:
+                logger.warning(
+                    'Google Calendar event creation failed for assessment %s: %s',
+                    assessment.pk, exc,
+                )
+                calendar_status = f'failed: {exc}'
+
+        result = AssessmentEventSerializer(assessment, context={'request': request}).data
+        result['calendarStatus'] = calendar_status
+        return Response(result)
+
+    @transaction.atomic
+    def delete(self, request, pk):
+        assessment = self._get_assessment(request, pk)
+        if not assessment:
+            return Response(
+                {'detail': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        google_token = _get_google_token(request)
+        errors = []
+
+        # Delete Calendar event
+        if google_token and assessment.google_calendar_event_id:
+            try:
+                delete_calendar_event(google_token, assessment.google_calendar_event_id)
+            except GoogleAPIError as exc:
+                logger.warning('Failed to delete Calendar event %s: %s',
+                               assessment.google_calendar_event_id, exc)
+                errors.append(f'Calendar: {exc}')
+
+        # Delete Drive attachments
+        if google_token:
+            for attachment in assessment.attachments.all():
+                if attachment.google_drive_file_id:
+                    try:
+                        delete_drive_file(google_token, attachment.google_drive_file_id)
+                    except GoogleAPIError as exc:
+                        logger.warning('Failed to delete Drive file %s: %s',
+                                       attachment.google_drive_file_id, exc)
+                        errors.append(f'Drive ({attachment.name}): {exc}')
+
+        assessment.delete()
+
+        response_data = {'detail': 'Assessment deleted.'}
+        if errors:
+            response_data['googleErrors'] = errors
+            response_data['detail'] = 'Assessment deleted, but some Google resources could not be cleaned up.'
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class AssessmentAttachmentUploadView(APIView):
+    """Upload a file attachment for an assessment (optionally to Google Drive)."""
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, pk):
+        try:
+            assessment = AssessmentEvent.objects.get(pk=pk, user=request.user)
+        except AssessmentEvent.DoesNotExist:
+            return Response(
+                {'detail': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response(
+                {'detail': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validate file size
+        if upload.size > ASSESSMENT_MAX_ATTACHMENT_BYTES:
+            return Response(
+                {'detail': f'File is too large. Maximum size is {ASSESSMENT_MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB.'},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+
+        # Validate file type
+        mime_type = upload.content_type or 'application/octet-stream'
+        if mime_type not in ASSESSMENT_ALLOWED_MIME_TYPES:
+            return Response(
+                {'detail': f'File type "{mime_type}" is not supported. Allowed: PDF, Word documents, images.'},
+                status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            )
+
+        file_bytes = upload.read()
+        file_name = upload.name or 'attachment'
+        file_size = f'{len(file_bytes) / (1024 * 1024):.2f} MB'
+
+        # Persist locally so the file is not lost if Google Drive upload is pending or fails
+        local_path = ''
+        try:
+            user_dir = os.path.join(settings.MEDIA_ROOT, 'attachments', str(request.user.pk))
+            os.makedirs(user_dir, exist_ok=True)
+            safe_file_name = f"{uuid.uuid4().hex[:8]}_{file_name}"
+            local_path = os.path.join(user_dir, safe_file_name)
+            with open(local_path, 'wb') as f:
+                f.write(file_bytes)
+        except OSError as exc:
+            logger.warning('Failed to save local attachment copy: %s', exc)
+            local_path = ''
+
+        drive_file_id = ''
+        drive_file_url = ''
+        google_token = _get_google_token(request)
+        drive_status = 'not_connected'
+        drive_error = None
+
+        if google_token:
+            try:
+                drive_file_id, drive_file_url = upload_to_drive(
+                    google_token,
+                    file_bytes,
+                    file_name,
+                    mime_type,
+                    assessment.course_code or 'General',
+                )
+                drive_status = 'uploaded'
+            except GoogleAPIError as exc:
+                logger.warning(
+                    'Google Drive upload failed for %s on assessment %s: %s',
+                    file_name, assessment.pk, exc,
+                )
+                drive_status = 'failed'
+                drive_error = exc.detail or str(exc)
+        else:
+            drive_status = 'not_connected'
+            drive_error = 'Google Drive access not granted. Please connect Google to save files to Drive.'
+
+        attachment = AssessmentAttachment.objects.create(
+            user=request.user,
+            assessment=assessment,
+            name=file_name,
+            size=file_size,
+            mime_type=mime_type,
+            storage_path=local_path,
+            google_drive_file_id=drive_file_id,
+            google_drive_file_url=drive_file_url,
+        )
+
+        result = AssessmentAttachmentSerializer(attachment, context={'request': request}).data
+        result['driveStatus'] = drive_status
+        if drive_error:
+            result['driveError'] = drive_error
+        return Response(result, status=status.HTTP_201_CREATED)
+
+    def get(self, request, pk):
+        """List attachments for an assessment."""
+        try:
+            assessment = AssessmentEvent.objects.get(pk=pk, user=request.user)
+        except AssessmentEvent.DoesNotExist:
+            return Response(
+                {'detail': 'Assessment not found.'}, status=status.HTTP_404_NOT_FOUND
+            )
+        attachments = assessment.attachments.all()
+        serializer = AssessmentAttachmentSerializer(
+            attachments, many=True, context={'request': request}
+        )
+        return Response(serializer.data)
+
+
+class AssessmentAttachmentSyncDriveView(APIView):
+    """
+    Sync an already-uploaded attachment to Google Drive using its locally stored file copy.
+    Endpoint: POST /api/v1/academics/attachments/<uuid:pk>/sync-drive/
+    """
+
+    def post(self, request, pk):
+        try:
+            attachment = AssessmentAttachment.objects.select_related('assessment').get(
+                pk=pk, user=request.user
+            )
+        except AssessmentAttachment.DoesNotExist:
+            return Response(
+                {'detail': 'Attachment not found.'}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        if attachment.google_drive_file_id and attachment.google_drive_file_url:
+            return Response({
+                'detail': 'Attachment is already uploaded to Google Drive.',
+                'googleDriveFileId': attachment.google_drive_file_id,
+                'googleDriveFileUrl': attachment.google_drive_file_url,
+                'driveStatus': 'uploaded',
+            }, status=status.HTTP_200_OK)
+
+        google_token = _get_google_token(request)
+        if not google_token:
+            return Response(
+                {
+                    'detail': 'No Google access token provided. Please connect Google first.',
+                    'code': 'no_token',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not attachment.storage_path or not os.path.exists(attachment.storage_path):
+            return Response(
+                {
+                    'detail': 'Original file is not cached locally on server. Please delete and re-upload the file.',
+                    'code': 'file_missing',
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            with open(attachment.storage_path, 'rb') as f:
+                file_bytes = f.read()
+        except OSError as exc:
+            return Response(
+                {'detail': f'Error reading local file: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        course_code = (
+            attachment.assessment.course_code if attachment.assessment else 'General'
+        ) or 'General'
+
+        try:
+            drive_file_id, drive_file_url = upload_to_drive(
+                google_token,
+                file_bytes,
+                attachment.name,
+                attachment.mime_type or 'application/octet-stream',
+                course_code,
+            )
+            attachment.google_drive_file_id = drive_file_id
+            attachment.google_drive_file_url = drive_file_url
+            attachment.save(update_fields=[
+                'google_drive_file_id',
+                'google_drive_file_url',
+                'updated_at',
+            ])
+            logger.info('Synced attachment %s to Google Drive (%s)', attachment.pk, drive_file_id)
+        except GoogleAPIError as exc:
+            logger.warning('Failed to sync attachment %s to Google Drive: %s', attachment.pk, exc)
+            return _google_error_response(exc)
+
+        result = AssessmentAttachmentSerializer(attachment, context={'request': request}).data
+        result['driveStatus'] = 'uploaded'
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class AssessmentAttachmentDeleteView(APIView):
+    """Delete an individual attachment (and its Drive file + local copy if applicable)."""
+
+    def delete(self, request, pk):
+        try:
+            attachment = AssessmentAttachment.objects.get(pk=pk, user=request.user)
+        except AssessmentAttachment.DoesNotExist:
+            return Response(
+                {'detail': 'Attachment not found.'}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        google_token = _get_google_token(request)
+        drive_error = None
+
+        if google_token and attachment.google_drive_file_id:
+            try:
+                delete_drive_file(google_token, attachment.google_drive_file_id)
+            except GoogleAPIError as exc:
+                logger.warning(
+                    'Failed to delete Drive file %s: %s',
+                    attachment.google_drive_file_id, exc,
+                )
+                drive_error = str(exc)
+
+        # Clean up local file copy if it exists
+        if attachment.storage_path and os.path.exists(attachment.storage_path):
+            try:
+                os.remove(attachment.storage_path)
+            except OSError as exc:
+                logger.warning('Failed to remove local attachment file: %s', exc)
+
+        attachment.delete()
+
+        response_data = {'detail': 'Attachment deleted.'}
+        if drive_error:
+            response_data['driveError'] = drive_error
+            response_data['detail'] = 'Attachment removed from StudySync, but the Google Drive file could not be deleted.'
+        return Response(response_data, status=status.HTTP_200_OK)
+
+
+class GoogleCalendarConnectView(APIView):
+    """Check Google Calendar and Drive authorization status and provide connection guidance."""
+
+    def get(self, request):
+        """Check if Calendar & Drive integration is available for this user."""
+        google_token = _get_google_token(request)
+        token_info = get_token_scopes(google_token) if google_token else None
+
+        has_calendar = bool(token_info and token_info['has_calendar'])
+        has_drive = bool(token_info and token_info['has_drive'])
+        connected = bool(token_info and token_info['valid'] and has_calendar and has_drive)
+
+        return Response({
+            'configured': bool(getattr(settings, 'GOOGLE_CLIENT_ID', '')),
+            'hasToken': bool(google_token),
+            'connected': connected,
+            'hasCalendar': has_calendar,
+            'hasDrive': has_drive,
+            'email': token_info.get('email', '') if token_info else '',
+            'scopes': {
+                'calendar': getattr(settings, 'GOOGLE_CALENDAR_SCOPES', ''),
+                'drive': getattr(settings, 'GOOGLE_DRIVE_SCOPES', ''),
+            },
+            'message': (
+                'Google Calendar & Drive are ready.' if connected
+                else 'Token is valid, but missing Drive or Calendar permissions. Please connect Google Services.' if (token_info and token_info['valid'])
+                else 'Your Google token has expired or is invalid. Please sign in again.' if google_token
+                else 'Sign in with Google to enable Calendar and Drive integration.'
+            ),
+        })
+
+    def post(self, request):
+        """Verify that the provided Google token can access Calendar and Drive."""
+        google_token = _get_google_token(request)
+        if not google_token:
+            return Response(
+                {
+                    'connected': False,
+                    'detail': 'No Google access token provided. Please sign in with Google.',
+                    'code': 'no_token',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        token_info = get_token_scopes(google_token)
+        if not token_info.get('valid'):
+            return Response(
+                {
+                    'connected': False,
+                    'detail': 'Your Google token is expired or invalid. Please sign in again.',
+                    'code': 'invalid_token',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        has_calendar = token_info.get('has_calendar', False)
+        has_drive = token_info.get('has_drive', False)
+        connected = has_calendar and has_drive
+
+        if not connected:
+            missing = []
+            if not has_calendar:
+                missing.append('Calendar')
+            if not has_drive:
+                missing.append('Drive')
+            return Response(
+                {
+                    'connected': False,
+                    'hasCalendar': has_calendar,
+                    'hasDrive': has_drive,
+                    'detail': f'Missing permissions for: {", ".join(missing)}. Please grant access.',
+                    'code': 'insufficient_scopes',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({
+            'connected': True,
+            'hasCalendar': True,
+            'hasDrive': True,
+            'email': token_info.get('email', ''),
+            'message': 'Google Calendar & Drive connected successfully.',
+        })
+

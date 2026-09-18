@@ -1,13 +1,16 @@
 import React, { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { AlertCircle, Calendar, Clock, Edit2, FileCheck2, Link as LinkIcon, Paperclip, Plus, Trash2, UploadCloud } from 'lucide-react';
+import { AlertCircle, Calendar, CheckCircle2, Clock, Edit2, ExternalLink, FileCheck2, Link as LinkIcon, Loader2, Paperclip, Plus, RefreshCw, Trash2, UploadCloud } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import { storageService } from '../services/storageService';
 import { Tabs } from '../components/common/Tabs';
 import { Badge } from '../components/common/Badge';
 import { Modal } from '../components/common/Modal';
 import { RelatedLinksManager } from '../components/assessments/RelatedLinksManager';
-import { driveServicePlaceholder } from '../services/driveServicePlaceholder';
+import { assessmentApi } from '../services/assessmentApi';
 import { assessmentFormSchema } from '../utils/assessmentSchemas';
 import { combineLocalDateTime, formatDuration, formatTime, getAssignmentStatus, normalizeHttpUrl } from '../utils/assessmentUtils';
 
@@ -56,11 +59,17 @@ const FieldError = ({ id, error }) => error ? (
 ) : null;
 
 export const AssessmentsPage = () => {
-  const { assessments, addAssessment, updateAssessment, deleteAssessment, courses } = useData();
+  const { assessments, addAssessment, updateAssessment, deleteAssessment, courses, refreshData } = useData();
+  const { providerToken, connectGoogleServices, hasGoogleServices } = useAuth();
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAssessment, setEditingAssessment] = useState(null);
-  const [uploadingMock, setUploadingMock] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadingFile, setUploadingFile] = useState(false);
+  const [syncingId, setSyncingId] = useState(null);
+  const [syncingAttachmentId, setSyncingAttachmentId] = useState(null);
+  const [pendingFiles, setPendingFiles] = useState([]);
   const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm({
     resolver: zodResolver(assessmentFormSchema),
     defaultValues: makeDefaults(courses)
@@ -75,12 +84,14 @@ export const AssessmentsPage = () => {
 
   const openAdd = () => {
     setEditingAssessment(null);
+    setPendingFiles([]);
     reset(makeDefaults(courses));
     setIsModalOpen(true);
   };
 
   const openEdit = (assessment) => {
     setEditingAssessment(assessment);
+    setPendingFiles([]);
     reset(makeDefaults(courses, assessment));
     setIsModalOpen(true);
   };
@@ -92,51 +103,180 @@ export const AssessmentsPage = () => {
     if (course) setValue('courseTitle', course.courseTitle, { shouldValidate: true });
   };
 
-  const uploadAttachment = async event => {
+  const handleFileSelect = event => {
     const file = event.target.files?.[0];
     if (!file) return;
-    setUploadingMock(true);
-    try {
-      const metadata = await driveServicePlaceholder.uploadFile(file);
-      setValue('attachments', [...attachments, metadata], { shouldDirty: true });
-    } finally {
-      setUploadingMock(false);
+
+    // Client-side validation
+    const maxSize = 25 * 1024 * 1024; // 25 MB
+    if (file.size > maxSize) {
+      alert(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum size is 25 MB.`);
       event.target.value = '';
+      return;
+    }
+
+    const allowedTypes = [
+      'application/pdf', 'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'text/plain'
+    ];
+    if (!allowedTypes.includes(file.type)) {
+      alert('Unsupported file type. Please upload PDF, Word documents, or images.');
+      event.target.value = '';
+      return;
+    }
+
+    // Add to pending files (will be uploaded after assessment is created/updated)
+    const metadata = {
+      id: `pending-${Date.now()}`,
+      name: file.name,
+      size: `${(file.size / (1024 * 1024)).toFixed(2)} MB`,
+      type: file.type,
+      _file: file, // Keep the File object for upload
+      status: 'pending'
+    };
+    setPendingFiles(prev => [...prev, metadata]);
+    setValue('attachments', [...attachments, metadata], { shouldDirty: true });
+    event.target.value = '';
+  };
+
+  const syncAssessmentToCalendar = async (assessment) => {
+    if (!hasGoogleServices) {
+      await connectGoogleServices();
+      return;
+    }
+    setSyncingId(assessment.id);
+    try {
+      await updateAssessment(assessment.id, {});
+      showToast('Synced to Google Calendar!');
+    } catch {
+      showToast('Could not sync to Google Calendar.', 'warning');
+    } finally {
+      setSyncingId(null);
     }
   };
 
-  const submitAssessment = values => {
-    const common = {
-      type: values.type,
-      courseId: values.courseId.trim(),
-      courseTitle: values.courseTitle.trim(),
-      title: values.title.trim(),
-      marks: values.marks,
-      priority: values.priority,
-      reminderTime: values.reminderTime,
-      notes: values.notes.trim(),
-      attachments: values.attachments,
-      links: values.links
-    };
-    const payload = values.type === 'assignment' ? {
-      ...common,
-      details: values.details.trim(),
-      submissionMethod: values.submissionMethod.trim(),
-      deadlineDate: values.deadlineDate,
-      deadlineTime: values.deadlineTime,
-      deadlineAt: combineLocalDateTime(values.deadlineDate, values.deadlineTime)
-    } : {
-      ...common,
-      date: values.date,
-      startTime: values.startTime,
-      endTime: values.endTime,
-      startAt: combineLocalDateTime(values.date, values.startTime),
-      endAt: combineLocalDateTime(values.date, values.endTime),
-      syllabus: values.syllabus.trim()
-    };
-    if (editingAssessment) updateAssessment(editingAssessment.id, payload);
-    else addAssessment(payload);
-    setIsModalOpen(false);
+  const handleSyncAttachmentToDrive = async (assessmentId, attachmentId) => {
+    if (!hasGoogleServices) {
+      showToast('Please connect Google first to upload attachments to Google Drive.', 'info');
+      await connectGoogleServices();
+      return;
+    }
+    setSyncingAttachmentId(attachmentId);
+    try {
+      const updatedAtt = await assessmentApi.syncAttachmentToDrive(attachmentId, providerToken);
+      if (updatedAtt?.googleDriveFileUrl) {
+        const list = storageService.get(storageService.KEYS.ASSESSMENTS, []);
+        const aIdx = list.findIndex(a => a.id === assessmentId);
+        if (aIdx !== -1 && list[aIdx].attachments) {
+          list[aIdx].attachments = list[aIdx].attachments.map(att =>
+            att.id === attachmentId ? { ...att, ...updatedAtt } : att
+          );
+          storageService.set(storageService.KEYS.ASSESSMENTS, list);
+          if (refreshData) refreshData();
+        }
+        showToast(`Uploaded "${updatedAtt.name}" to Google Drive!`);
+      } else {
+        showToast(updatedAtt?.detail || 'Could not upload to Google Drive.', 'warning');
+      }
+    } catch (err) {
+      console.error('Failed to sync attachment to Drive:', err);
+      const msg = err.response?.data?.detail || err.message || 'Google Drive upload failed.';
+      showToast(msg, 'error');
+    } finally {
+      setSyncingAttachmentId(null);
+    }
+  };
+
+  const submitAssessment = async (values) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+
+    try {
+      const common = {
+        type: values.type,
+        courseId: values.courseId.trim(),
+        courseTitle: values.courseTitle.trim(),
+        title: values.title.trim(),
+        marks: values.marks,
+        priority: values.priority,
+        reminderTime: values.reminderTime,
+        notes: values.notes.trim(),
+        // Send only non-pending attachments in the payload (pending ones are uploaded separately)
+        attachments: (values.attachments || []).filter(a => !a._file),
+        links: values.links
+      };
+      const payload = values.type === 'assignment' ? {
+        ...common,
+        details: values.details.trim(),
+        submissionMethod: values.submissionMethod.trim(),
+        deadlineDate: values.deadlineDate,
+        deadlineTime: values.deadlineTime,
+        deadlineAt: combineLocalDateTime(values.deadlineDate, values.deadlineTime)
+      } : {
+        ...common,
+        date: values.date,
+        startTime: values.startTime,
+        endTime: values.endTime,
+        startAt: combineLocalDateTime(values.date, values.startTime),
+        endAt: combineLocalDateTime(values.date, values.endTime),
+        syllabus: values.syllabus.trim()
+      };
+
+      let assessmentId;
+
+      if (editingAssessment) {
+        const updated = await updateAssessment(editingAssessment.id, payload);
+        assessmentId = updated?.id || editingAssessment.id;
+      } else {
+        const created = await addAssessment(payload);
+        assessmentId = created?.id;
+      }
+
+      // Upload pending files if we have a valid server assessment ID (not a local fallback ID)
+      const hasServerId = assessmentId && !String(assessmentId).startsWith('ev-');
+      if (hasServerId && pendingFiles.length > 0) {
+        setUploadingFile(true);
+        let uploadFailures = 0;
+        const uploadedAttachments = [];
+        for (const pending of pendingFiles) {
+          if (!pending._file) continue;
+          try {
+            const att = await assessmentApi.uploadAttachment(assessmentId, pending._file, providerToken);
+            uploadedAttachments.push(att);
+            if (att.driveStatus === 'uploaded') {
+              showToast(`Uploaded "${att.name}" to Google Drive!`);
+            } else if (att.driveStatus === 'not_connected') {
+              showToast(`"${att.name}" saved in StudySync. (Google Drive not connected)`, 'info');
+            } else if (att.driveStatus?.startsWith('failed')) {
+              showToast(`"${att.name}" saved in StudySync, but Drive upload failed: ${att.driveError || ''}`, 'warning');
+            }
+          } catch (err) {
+            console.error('File upload failed:', err);
+            uploadFailures++;
+            showToast(`Failed to upload ${pending.name || 'file'}`, 'error');
+          }
+        }
+        setUploadingFile(false);
+        if (uploadedAttachments.length > 0) {
+          const list = storageService.get(storageService.KEYS.ASSESSMENTS, []);
+          const idx = list.findIndex(a => a.id === assessmentId);
+          if (idx !== -1) {
+            list[idx].attachments = [...(list[idx].attachments || []), ...uploadedAttachments];
+            storageService.set(storageService.KEYS.ASSESSMENTS, list);
+            if (refreshData) refreshData();
+          }
+        }
+        if (uploadFailures > 0) {
+          console.warn(`${uploadFailures} file(s) failed to upload.`);
+        }
+      }
+
+      setIsModalOpen(false);
+      setPendingFiles([]);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const deadlineIsPast = type === 'assignment' && deadlineDate && deadlineTime && new Date(`${deadlineDate}T${deadlineTime}:00`).getTime() < Date.now();
@@ -157,7 +297,29 @@ export const AssessmentsPage = () => {
               { id: 'examination', label: 'Exams', count: assessments.filter(item => item.type === 'examination').length }
             ]} activeTab={activeTab} onChange={setActiveTab} />
           </div>
-          <button type="button" onClick={openAdd} className="min-h-11 flex items-center justify-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-bold shadow-md shrink-0"><Plus className="w-4 h-4" /><span>Schedule New</span></button>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {!hasGoogleServices ? (
+              <button
+                type="button"
+                onClick={() => connectGoogleServices()}
+                className="min-h-11 flex items-center justify-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-xl text-xs font-bold transition-colors"
+                title="Connect Google Calendar & Drive for automatic assessment syncing"
+              >
+                <Calendar className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>Connect Google</span>
+              </button>
+            ) : (
+              <div
+                className="min-h-11 flex items-center gap-1.5 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200/80 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 rounded-xl text-xs font-bold"
+                title="Google Calendar & Drive are connected"
+              >
+                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                <span>Google Sync Active</span>
+              </div>
+            )}
+            <button type="button" onClick={openAdd} className="min-h-11 flex items-center justify-center gap-1.5 px-4 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-bold shadow-md shrink-0"><Plus className="w-4 h-4" /><span>Schedule New</span></button>
+          </div>
         </div>
       </div>
 
@@ -166,12 +328,39 @@ export const AssessmentsPage = () => {
           const isAssignment = assessment.type === 'assignment';
           const duration = formatDuration(assessment.startTime, assessment.endTime);
           const materialCount = (assessment.attachments?.length || 0) + (assessment.links?.length || 0);
+          const hasCalendarEvent = Boolean(assessment.googleCalendarEventId || assessment.googleCalendarEventUrl);
+          const isSyncing = syncingId === assessment.id;
+
           return (
             <article key={assessment.id} className="p-5 sm:p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col justify-between gap-4 min-w-0">
               <div className="min-w-0">
                 <div className="flex items-center justify-between gap-3">
                   <Badge variant={assessment.type === 'CT' ? 'amber' : isAssignment ? 'cyan' : 'rose'}>{assessment.type === 'CT' ? 'CLASS TEST' : assessment.type.toUpperCase()}</Badge>
-                  <span className="text-xs font-bold text-slate-500 dark:text-slate-400 truncate">{assessment.courseId}{assessment.courseTitle ? ` · ${assessment.courseTitle}` : ''}</span>
+                  <div className="flex items-center gap-2">
+                    {hasCalendarEvent ? (
+                      <a
+                        href={assessment.googleCalendarEventUrl || 'https://calendar.google.com'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-[10px] font-bold hover:underline"
+                        title="View in Google Calendar"
+                      >
+                        <CheckCircle2 className="w-3 h-3" />Calendar
+                      </a>
+                    ) : hasGoogleServices ? (
+                      <button
+                        type="button"
+                        onClick={() => syncAssessmentToCalendar(assessment)}
+                        disabled={isSyncing}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px] font-bold transition-colors disabled:opacity-50"
+                        title="Sync this assessment to Google Calendar"
+                      >
+                        {isSyncing ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <RefreshCw className="w-2.5 h-2.5" />}
+                        <span>Sync</span>
+                      </button>
+                    ) : null}
+                    <span className="text-xs font-bold text-slate-500 dark:text-slate-400 truncate">{assessment.courseId}{assessment.courseTitle ? ` · ${assessment.courseTitle}` : ''}</span>
+                  </div>
                 </div>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white mt-2 leading-snug">{assessment.title}</h3>
                 <div className="mt-3 space-y-2 text-xs text-slate-600 dark:text-slate-300">
@@ -187,7 +376,52 @@ export const AssessmentsPage = () => {
                   <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1"><span><strong>Marks:</strong> {assessment.marks ?? 'Not applicable'}</span><span><strong>Priority:</strong> {assessment.priority || 'medium'}</span><span><strong>Related links:</strong> {assessment.links?.length || 0}</span>{isAssignment && <span><strong>Materials & links:</strong> {materialCount}</span>}</div>
                 </div>
                 {(assessment.attachments?.length > 0 || assessment.links?.length > 0) && <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2 min-w-0">
-                  {assessment.attachments?.map(attachment => <div key={attachment.id || attachment.name} className="flex items-center gap-1.5 p-2 bg-slate-100/60 dark:bg-slate-800/40 rounded-xl text-[11px] text-slate-700 dark:text-slate-300 font-semibold min-w-0"><Paperclip className="w-3 h-3 text-brand-500 shrink-0" /><span className="truncate">{attachment.name} {attachment.size ? `(${attachment.size})` : ''}</span></div>)}
+                  {assessment.attachments?.map(attachment => {
+                    const isSynced = Boolean(attachment.googleDriveFileUrl || attachment.driveUrl);
+                    const driveUrl = attachment.googleDriveFileUrl || attachment.driveUrl;
+                    const isAttachmentSyncing = syncingAttachmentId === attachment.id;
+
+                    return (
+                      <div key={attachment.id || attachment.name} className="flex items-center gap-1.5 p-2 bg-slate-100/60 dark:bg-slate-800/40 rounded-xl text-[11px] text-slate-700 dark:text-slate-300 font-semibold min-w-0">
+                        <Paperclip className="w-3 h-3 text-brand-500 shrink-0" />
+                        <span className="truncate">{attachment.name} {attachment.size ? `(${attachment.size})` : ''}</span>
+                        {isSynced ? (
+                          <a
+                            href={driveUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 text-[10px] font-bold hover:underline shrink-0"
+                            title="Open in Google Drive"
+                          >
+                            <ExternalLink className="w-2.5 h-2.5" />
+                            <span>Drive</span>
+                          </a>
+                        ) : (
+                          <div className="ml-auto flex items-center gap-1 shrink-0">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 font-medium">
+                              Not on Drive
+                            </span>
+                            {hasGoogleServices && (
+                              <button
+                                type="button"
+                                onClick={() => handleSyncAttachmentToDrive(assessment.id, attachment.id)}
+                                disabled={isAttachmentSyncing}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/40 text-brand-700 dark:text-brand-300 text-[10px] font-bold transition-colors disabled:opacity-50"
+                                title="Upload this file to Google Drive"
+                              >
+                                {isAttachmentSyncing ? (
+                                  <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                                ) : (
+                                  <UploadCloud className="w-2.5 h-2.5" />
+                                )}
+                                <span>Upload to Drive</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   {assessment.links?.map(link => {
                     const safeUrl = normalizeHttpUrl(link.url);
                     return safeUrl.error ? null : <a key={link.id || link.url} href={safeUrl.value} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-brand-600 dark:text-brand-400 font-bold hover:underline min-w-0"><LinkIcon className="w-3 h-3 shrink-0" /><span className="truncate">{link.label || link.url}</span></a>;
@@ -203,8 +437,29 @@ export const AssessmentsPage = () => {
         })}
       </div>
 
-      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={editingAssessment ? 'Edit Assessment' : 'Schedule New Assessment'} maxWidth="max-w-3xl">
+      <Modal isOpen={isModalOpen} onClose={() => !isSubmitting && setIsModalOpen(false)} title={editingAssessment ? 'Edit Assessment' : 'Schedule New Assessment'} maxWidth="max-w-3xl">
         <form onSubmit={handleSubmit(submitAssessment)} noValidate className="space-y-5 min-w-0">
+          {!hasGoogleServices ? (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-xs">
+              <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
+                <Calendar className="w-4 h-4 text-brand-500 shrink-0" />
+                <span>Want to sync assessments to your Google Calendar & Drive?</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => connectGoogleServices()}
+                className="px-3 py-1.5 bg-brand-50 hover:bg-brand-100 dark:bg-brand-950/40 text-brand-700 dark:text-brand-300 font-bold rounded-lg border border-brand-200 dark:border-brand-800 text-[11px] shrink-0 transition-colors text-center"
+              >
+                Connect Google
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-800/60 text-xs text-emerald-700 dark:text-emerald-400 font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+              <span>Google Calendar & Drive sync is active for this assessment.</span>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><label htmlFor="assessment-type" className={labelClass}>Assessment type</label><select id="assessment-type" {...register('type')} className={inputClass}><option value="CT">Class Test (CT)</option><option value="assignment">Assignment</option><option value="examination">Examination</option></select></div>
             <div><label htmlFor="assessment-title" className={labelClass}>{type === 'CT' ? 'CT title or number' : type === 'examination' ? 'Examination title or type' : 'Assignment title'}</label><input id="assessment-title" {...register('title')} aria-invalid={Boolean(errors.title)} aria-describedby={errors.title ? 'assessment-title-error' : undefined} className={inputClass} placeholder="Enter a title" /><FieldError id="assessment-title-error" error={errors.title} /></div>
@@ -236,9 +491,57 @@ export const AssessmentsPage = () => {
             <div><label htmlFor="assessment-reminder" className={labelClass}>Reminder time</label><select id="assessment-reminder" {...register('reminderTime')} className={inputClass}><option value="1h">1 hour before</option><option value="6h">6 hours before</option><option value="12h">12 hours before</option><option value="24h">24 hours before</option><option value="48h">48 hours before</option><option value="1w">1 week before</option></select></div>
           </div>
           <div><label htmlFor="assessment-notes" className={labelClass}>Notes</label><textarea id="assessment-notes" rows={3} {...register('notes')} className={inputClass} placeholder="Revision notes, instructions, or reminders" /></div>
-          <div><span className={labelClass}>Material attachments</span><div className="p-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-center"><input type="file" id="assessment-file-upload" onChange={uploadAttachment} className="sr-only" /><label htmlFor="assessment-file-upload" className="min-h-11 cursor-pointer flex flex-col items-center justify-center gap-1"><UploadCloud className="w-6 h-6 text-brand-500" /><span className="text-xs font-bold text-slate-700 dark:text-slate-300">{uploadingMock ? 'Simulating cloud upload…' : 'Upload PDF, document, or image'}</span></label></div>{attachments.length > 0 && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{attachments.length} material attachment{attachments.length === 1 ? '' : 's'} saved</p>}</div>
+
+          {/* Material attachments */}
+          <div>
+            <span className={labelClass}>Material attachments</span>
+            <div className="p-3 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl text-center">
+              <input type="file" id="assessment-file-upload" onChange={handleFileSelect} className="sr-only" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,.gif,.txt" />
+              <label htmlFor="assessment-file-upload" className="min-h-11 cursor-pointer flex flex-col items-center justify-center gap-1">
+                <UploadCloud className="w-6 h-6 text-brand-500" />
+                <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                  {uploadingFile ? 'Uploading…' : 'Upload PDF, document, or image (max 25 MB)'}
+                </span>
+                {hasGoogleServices ? (
+                  <span className="text-[10px] text-emerald-600 dark:text-emerald-400">✓ Files will be automatically saved to your Google Drive</span>
+                ) : (
+                  <div className="flex flex-col sm:flex-row items-center justify-center gap-1 text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    <span>Google Drive not connected. Files will save in StudySync.</span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); connectGoogleServices(); }}
+                      className="text-brand-600 dark:text-brand-400 font-bold underline hover:text-brand-700"
+                    >
+                      Connect Google
+                    </button>
+                  </div>
+                )}
+              </label>
+            </div>
+            {attachments.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {attachments.map((att, i) => (
+                  <div key={att.id || i} className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                    <Paperclip className="w-3 h-3 text-brand-500 shrink-0" />
+                    <span className="truncate">{att.name}</span>
+                    <span className="text-slate-400">{att.size || ''}</span>
+                    {att._file && <span className="text-[10px] text-amber-500 font-semibold">Pending upload</span>}
+                    {(att.googleDriveFileUrl || att.driveUrl) && <span className="text-[10px] text-emerald-500 font-semibold">On Drive</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <RelatedLinksManager links={links} onChange={nextLinks => setValue('links', nextLinks, { shouldDirty: true, shouldValidate: true })} />
-          <div className="pt-2 flex flex-col-reverse sm:flex-row sm:justify-end gap-2"><button type="button" onClick={() => setIsModalOpen(false)} className="min-h-11 px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button><button type="submit" className="min-h-11 px-5 py-2 text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white rounded-xl shadow-md">Save Assessment</button></div>
+
+          <div className="pt-2 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <button type="button" onClick={() => !isSubmitting && setIsModalOpen(false)} disabled={isSubmitting} className="min-h-11 px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50">Cancel</button>
+            <button type="submit" disabled={isSubmitting} className="min-h-11 px-5 py-2 text-xs font-bold bg-brand-600 hover:bg-brand-700 text-white rounded-xl shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+              {isSubmitting && <Loader2 className="w-4 h-4 animate-spin" />}
+              {isSubmitting ? 'Saving…' : editingAssessment ? 'Update Assessment' : 'Schedule Assessment'}
+            </button>
+          </div>
         </form>
       </Modal>
     </div>
