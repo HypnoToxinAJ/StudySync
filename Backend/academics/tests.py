@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import patch
 
 import jwt
@@ -114,6 +115,49 @@ class RoutineApiTests(APITestCase):
         self.assertEqual(imported.section, 'B')
         mocked_extract.assert_called_once()
         self.assertEqual(mocked_extract.call_args.args[2:], ('B2', 'B'))
+
+    @patch('academics.views.extract_schedule')
+    def test_import_routine_with_duplicate_course_ids(self, mocked_extract):
+        mocked_extract.return_value = [
+            ExtractedClass(
+                day_of_week='SUNDAY',
+                course_code='CSE-346',
+                course_title='Artificial Intelligence Lab',
+                credit='1.5',
+                teacher_name='AI Faculty',
+                start_time='09:00 AM',
+                end_time='11:30 AM',
+                room='Lab 501',
+            ),
+        ]
+        self.authenticate()
+        user = self.client.get('/api/v1/auth/me/').wsgi_request.user
+        # Create duplicate courses with different semesters for the user
+        Course.objects.create(
+            user=user,
+            course_id='CSE-346',
+            course_title='AI Lab Old',
+            semester='5th Semester',
+            credit=Decimal('1.5'),
+        )
+        Course.objects.create(
+            user=user,
+            course_id='CSE-346',
+            course_title='AI Lab New',
+            semester='',
+            credit=Decimal('1.5'),
+        )
+
+        response = self.client.post(
+            '/api/v1/academics/routines/import-image/',
+            {'file': self.image_file(), 'subgroup': 'A1'},
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['created'], 1)
+        routine = Routine.objects.get(course_code='CSE-346')
+        self.assertEqual(routine.course.course_id, 'CSE-346')
 
     @patch('academics.views.extract_schedule')
     def test_new_import_replaces_only_previous_ai_rows(self, mocked_extract):

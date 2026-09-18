@@ -10,7 +10,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 from django.utils import timezone
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Case, IntegerField, Value, When
 from google.genai import errors as genai_errors
 from pydantic import ValidationError as PydanticValidationError
@@ -443,22 +443,36 @@ class RoutineImageImportView(APIView):
             if code not in course_map:
                 c_type = infer_class_type(f'{code} {item.course_title}')
                 is_theory = (c_type == Routine.ClassType.THEORY)
-                credit_val = Decimal(item.credit)
-                course, _ = Course.objects.get_or_create(
-                    user=request.user,
-                    course_id=code,
-                    defaults={
-                        'course_title': item.course_title,
-                        'credit': credit_val,
-                        'course_type': 'lab' if c_type == Routine.ClassType.LAB else c_type,
-                        'faculty': item.teacher_name,
-                        'color': color_for_course(code),
-                        'assessment_applicable': is_theory,
-                        'best_assessment_count': max(1, int(round(float(credit_val)))) if is_theory else 0,
-                        'source': Course.Source.OCR_IMPORT,
-                        'import_id': import_id,
-                    },
+                try:
+                    credit_val = Decimal(str(item.credit))
+                except Exception:
+                    credit_val = Decimal('3.0')
+                course = (
+                    Course.objects.filter(user=request.user, course_id__iexact=code)
+                    .order_by('-created_at')
+                    .first()
                 )
+                if not course:
+                    try:
+                        course = Course.objects.create(
+                            user=request.user,
+                            course_id=code,
+                            course_title=item.course_title,
+                            credit=credit_val,
+                            course_type='lab' if c_type == Routine.ClassType.LAB else c_type,
+                            faculty=item.teacher_name,
+                            color=color_for_course(code),
+                            assessment_applicable=is_theory,
+                            best_assessment_count=max(1, int(round(float(credit_val)))) if is_theory else 0,
+                            source=Course.Source.OCR_IMPORT,
+                            import_id=import_id,
+                        )
+                    except IntegrityError:
+                        course = (
+                            Course.objects.filter(user=request.user, course_id__iexact=code)
+                            .order_by('-created_at')
+                            .first()
+                        )
                 course_map[code] = course
 
         for item in extracted:
@@ -474,6 +488,21 @@ class RoutineImageImportView(APIView):
             seen.add(signature)
             course_code = item.course_code.upper()
             class_type = infer_class_type(f'{course_code} {item.course_title}')
+            try:
+                credit_val = Decimal(str(item.credit))
+            except Exception:
+                credit_val = Decimal('3.0')
+            try:
+                start_time = datetime.strptime(item.start_time.strip(), '%I:%M %p').time()
+                end_time = datetime.strptime(item.end_time.strip(), '%I:%M %p').time()
+            except Exception:
+                continue
+            if end_time <= start_time:
+                continue
+
+            day_key = str(item.day_of_week).upper()
+            day_of_week = DAY_MAP.get(day_key, Routine.DayOfWeek.SUNDAY)
+
             records.append(
                 Routine(
                     user=request.user,
@@ -482,15 +511,15 @@ class RoutineImageImportView(APIView):
                     course_title=item.course_title,
                     faculty=item.teacher_name,
                     teacher_name=item.teacher_name,
-                    credit=Decimal(item.credit),
+                    credit=credit_val,
                     course_type=(
                         'lab' if class_type == Routine.ClassType.LAB else class_type
                     ),
                     class_type=class_type,
-                    day_of_week=DAY_MAP[item.day_of_week],
-                    start_time=datetime.strptime(item.start_time, '%I:%M %p').time(),
-                    end_time=datetime.strptime(item.end_time, '%I:%M %p').time(),
-                    room=item.room,
+                    day_of_week=day_of_week,
+                    start_time=start_time,
+                    end_time=end_time,
+                    room=item.room or '',
                     group=subgroup,
                     section=section_letter,
                     color=color_for_course(course_code),
@@ -508,28 +537,36 @@ class RoutineImageImportView(APIView):
         replace_existing = str(
             request.data.get('replaceExistingImports', 'true')
         ).lower() not in ('false', '0', 'no')
-        with transaction.atomic():
-            replaced_count = 0
-            if replace_existing:
-                replaced_count, _details = Routine.objects.filter(
+        try:
+            with transaction.atomic():
+                replaced_count = 0
+                if replace_existing:
+                    replaced_count, _details = Routine.objects.filter(
+                        user=request.user,
+                        source=Routine.Source.OCR_IMPORT,
+                    ).delete()
+                created = Routine.objects.bulk_create(records)
+                RoutineImport.objects.create(
                     user=request.user,
-                    source=Routine.Source.OCR_IMPORT,
-                ).delete()
-            created = Routine.objects.bulk_create(records)
-            RoutineImport.objects.create(
-                user=request.user,
-                import_id=import_id,
-                source_file_name=upload.name[:255],
-                source_file_type=upload.content_type,
-                source_file_page_count=1,
-                detected_groups=[subgroup],
-                selected_group=subgroup,
-                section=section_letter,
-                created_routine_ids=[record.pk for record in created],
-                warnings=[],
+                    import_id=import_id,
+                    source_file_name=(getattr(upload, 'name', '') or 'routine_image')[:255],
+                    source_file_type=getattr(upload, 'content_type', '') or 'image/jpeg',
+                    source_file_page_count=1,
+                    detected_groups=[subgroup],
+                    selected_group=subgroup,
+                    section=section_letter,
+                    created_routine_ids=[record.pk for record in created],
+                    warnings=[],
+                )
+        except Exception as exc:
+            logger.exception('Failed to persist routine records: %s', exc)
+            return Response(
+                {'detail': 'Failed to save routine records to the database.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         payload = RoutineSerializer(created, many=True, context={'request': request}).data
+
         return Response(
             {
                 'importId': import_id,
