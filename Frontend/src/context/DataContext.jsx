@@ -7,6 +7,7 @@ import { attendanceService } from '../services/attendanceService';
 import { marksService } from '../services/marksService';
 import { cgpaService } from '../services/cgpaService';
 import { tuitionService } from '../services/tuitionService';
+import { tuitionApi } from '../services/tuitionApi';
 import { expenseService } from '../services/expenseService';
 import { shortcutService } from '../services/shortcutService';
 import { focusService } from '../services/focusService';
@@ -18,7 +19,7 @@ const DataContext = createContext();
 
 export const DataProvider = ({ children }) => {
   const { showToast } = useToast();
-  const { providerToken } = useAuth();
+  const { providerToken, session } = useAuth();
 
   const [courses, setCourses] = useState([]);
   const [routines, setRoutines] = useState([]);
@@ -63,6 +64,51 @@ export const DataProvider = ({ children }) => {
     globalThis.addEventListener('studysync:synced', handleSync);
     return () => globalThis.removeEventListener('studysync:synced', handleSync);
   }, []);
+
+  // Tuition synchronization with Django & Supabase PostgreSQL
+  useEffect(() => {
+    let active = true;
+
+    const syncTuitionWithServer = async () => {
+      if (!session?.access_token) return;
+      try {
+        const remoteStudents = await tuitionApi.list();
+        const localStudents = tuitionService.getStudents();
+
+        if ((!remoteStudents || remoteStudents.length === 0) && localStudents.length > 0) {
+          // Push existing local students (e.g. "Jeet") into database
+          const synced = await tuitionApi.syncBatch(localStudents);
+          if (active && Array.isArray(synced)) {
+            tuitionService.saveStudents(synced);
+            setTuitions(synced);
+          }
+        } else if (Array.isArray(remoteStudents)) {
+          const remoteIds = new Set(remoteStudents.map(s => s.id));
+          const localOnly = localStudents.filter(s => !remoteIds.has(s.id));
+          if (localOnly.length > 0) {
+            const synced = await tuitionApi.syncBatch(localStudents);
+            if (active && Array.isArray(synced)) {
+              tuitionService.saveStudents(synced);
+              setTuitions(synced);
+            }
+          } else {
+            if (active) {
+              tuitionService.saveStudents(remoteStudents);
+              setTuitions(remoteStudents);
+            }
+          }
+        }
+      } catch (err) {
+        console.debug('Tuition cloud sync deferred:', err?.message || err);
+      }
+    };
+
+    void syncTuitionWithServer();
+
+    return () => {
+      active = false;
+    };
+  }, [session?.access_token]);
 
   const updateSidebarPreferences = (preferences) => {
     storageService.set(storageService.KEYS.SIDEBAR_PREFERENCES, preferences);
@@ -405,80 +451,238 @@ export const DataProvider = ({ children }) => {
   };
 
   // --- Tuition Handlers ---
-  const addTuitionStudent = (data) => {
-    tuitionService.addStudent(data);
+  const addTuitionStudent = async (data) => {
+    const created = tuitionService.addStudent(data);
     refreshData();
     showToast('Tuition student added!');
+
+    try {
+      const serverStudent = await tuitionApi.create(created);
+      if (serverStudent) {
+        const currentList = tuitionService.getStudents();
+        const idx = currentList.findIndex(s => s.id === created.id);
+        if (idx !== -1) {
+          currentList[idx] = serverStudent;
+        } else {
+          currentList.push(serverStudent);
+        }
+        tuitionService.saveStudents(currentList);
+        refreshData();
+      }
+      return serverStudent || created;
+    } catch (error) {
+      showToast(
+        error.message || 'Tuition student saved locally but could not reach the server.',
+        'warning'
+      );
+      return created;
+    }
   };
 
-  const updateTuitionStudent = (id, data) => {
+  const updateTuitionStudent = async (id, data) => {
     const updated = tuitionService.updateStudent(id, data);
     refreshData();
     showToast(updated ? 'Tuition student updated!' : 'Tuition student not found.', updated ? 'success' : 'warning');
+
+    if (updated) {
+      try {
+        const serverStudent = await tuitionApi.update(id, data);
+        if (serverStudent) {
+          const currentList = tuitionService.getStudents();
+          const idx = currentList.findIndex(s => s.id === id);
+          if (idx !== -1) {
+            currentList[idx] = serverStudent;
+            tuitionService.saveStudents(currentList);
+            refreshData();
+          }
+        }
+      } catch (error) {
+        showToast(
+          error.message || 'Tuition update saved locally but could not reach the server.',
+          'warning'
+        );
+      }
+    }
     return updated;
   };
 
-  const deleteTuitionStudent = (id) => {
+  const deleteTuitionStudent = async (id) => {
     tuitionService.deleteStudent(id);
     refreshData();
     showToast('Tuition student removed.');
+
+    try {
+      await tuitionApi.delete(id);
+    } catch (error) {
+      if (error.status !== 404) {
+        showToast(
+          error.message || 'Student was removed locally but not from the server.',
+          'warning'
+        );
+      }
+    }
   };
 
-  const updateTuitionClassDate = (studentId, slotOrder, date) => {
+  const updateTuitionClassDate = async (studentId, slotOrder, date) => {
     tuitionService.updateClassSlotDate(studentId, slotOrder, date);
     refreshData();
     showToast('Class date updated.');
+
+    try {
+      const serverStudent = await tuitionApi.updateSlot(studentId, slotOrder, {
+        date: date || null,
+        completed: Boolean(date)
+      });
+      if (serverStudent) {
+        const currentList = tuitionService.getStudents();
+        const idx = currentList.findIndex(s => s.id === studentId);
+        if (idx !== -1) {
+          currentList[idx] = serverStudent;
+          tuitionService.saveStudents(currentList);
+          refreshData();
+        }
+      }
+    } catch (error) {
+      showToast(
+        error.message || 'Date updated locally but could not reach the server.',
+        'warning'
+      );
+    }
   };
 
-  const startNewTuitionMonth = (studentId, targetNewMonth = null) => {
+  const startNewTuitionMonth = async (studentId, targetNewMonth = null) => {
     tuitionService.startNewMonth(studentId, targetNewMonth);
     refreshData();
     showToast('New tuition month started.');
+
+    try {
+      const serverStudent = await tuitionApi.startNewMonth(studentId, targetNewMonth);
+      if (serverStudent) {
+        const currentList = tuitionService.getStudents();
+        const idx = currentList.findIndex(s => s.id === studentId);
+        if (idx !== -1) {
+          currentList[idx] = serverStudent;
+          tuitionService.saveStudents(currentList);
+          refreshData();
+        }
+      }
+    } catch (error) {
+      showToast(
+        error.message || 'New month started locally but could not reach the server.',
+        'warning'
+      );
+    }
   };
 
-  const addTuitionNote = (studentId, content) => {
+  const addTuitionNote = async (studentId, content) => {
     const created = tuitionService.addStudentNote(studentId, content);
     refreshData();
     if (created) {
       showToast('Tuition note added.');
     } else {
       showToast('Tuition note cannot be empty.', 'warning');
+      return null;
     }
-    return created;
+
+    try {
+      const serverNote = await tuitionApi.addNote(studentId, content, created?.id);
+      if (serverNote) {
+        const currentList = tuitionService.getStudents();
+        const student = currentList.find(s => s.id === studentId);
+        if (student?.notes) {
+          const noteIdx = student.notes.findIndex(n => n.id === created.id);
+          if (noteIdx !== -1) {
+            student.notes[noteIdx] = serverNote;
+            tuitionService.saveStudents(currentList);
+            refreshData();
+          }
+        }
+      }
+      return serverNote || created;
+    } catch (error) {
+      showToast(
+        error.message || 'Note saved locally but could not reach the server.',
+        'warning'
+      );
+      return created;
+    }
   };
 
-  const updateTuitionNote = (studentId, noteId, content) => {
+  const updateTuitionNote = async (studentId, noteId, content) => {
     const updated = tuitionService.updateStudentNote(studentId, noteId, content);
     refreshData();
     if (updated) {
       showToast('Tuition note updated.');
     } else {
       showToast('Unable to update tuition note.', 'warning');
+      return null;
+    }
+
+    try {
+      await tuitionApi.updateNote(studentId, noteId, content);
+    } catch (error) {
+      showToast(
+        error.message || 'Note update saved locally but could not reach the server.',
+        'warning'
+      );
     }
     return updated;
   };
 
-  const deleteTuitionNote = (studentId, noteId) => {
+  const deleteTuitionNote = async (studentId, noteId) => {
     const deleted = tuitionService.deleteStudentNote(studentId, noteId);
     refreshData();
     if (deleted) {
       showToast('Tuition note deleted.');
     } else {
       showToast('No tuition note found to delete.', 'warning');
+      return null;
+    }
+
+    try {
+      await tuitionApi.deleteNote(studentId, noteId);
+    } catch (error) {
+      if (error.status !== 404) {
+        showToast(
+          error.message || 'Note deleted locally but could not reach the server.',
+          'warning'
+        );
+      }
     }
     return deleted;
   };
 
-  const logTuitionClass = (studentId, sessionData) => {
+  const logTuitionClass = async (studentId, sessionData) => {
     const logged = tuitionService.logClassSession?.(studentId, sessionData);
+    const slotOrder = Number(sessionData?.slotOrder ?? 1);
+    const date = sessionData?.date ?? new Date().toISOString().slice(0, 10);
+
     if (logged === undefined || logged === null) {
-      const fallback = tuitionService.updateClassSlotDate(studentId, sessionData?.slotOrder ?? 1, sessionData?.date ?? new Date().toISOString().slice(0, 10));
+      const fallback = tuitionService.updateClassSlotDate(studentId, slotOrder, date);
       refreshData();
       showToast(fallback ? 'Tuition class logged successfully!' : 'Tuition session update failed.', fallback ? 'success' : 'warning');
-      return fallback;
+    } else {
+      refreshData();
+      showToast('Tuition class logged successfully!');
     }
-    refreshData();
-    showToast('Tuition class logged successfully!');
+
+    try {
+      const serverStudent = await tuitionApi.updateSlot(studentId, slotOrder, {
+        date,
+        completed: true
+      });
+      if (serverStudent) {
+        const currentList = tuitionService.getStudents();
+        const idx = currentList.findIndex(s => s.id === studentId);
+        if (idx !== -1) {
+          currentList[idx] = serverStudent;
+          tuitionService.saveStudents(currentList);
+          refreshData();
+        }
+      }
+    } catch (error) {
+      // Background sync warning
+    }
     return logged;
   };
 

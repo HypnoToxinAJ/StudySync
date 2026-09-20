@@ -25,6 +25,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/', include('core.urls')),
     path('api/v1/academics/', include('academics.urls')),
+    path('api/v1/tuition/', include('tuition.urls')),
     path(
         'api/v1/routine-ocr/extract/',
         RoutineImageImportView.as_view(),

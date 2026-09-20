@@ -25,7 +25,7 @@ class NullableDateField(serializers.DateField):
 
 
 class UserOwnedModelSerializer(serializers.ModelSerializer):
-    id = serializers.CharField(required=False)
+    id = serializers.CharField(required=False, allow_blank=True)
     createdAt = serializers.DateTimeField(source='created_at', read_only=True)
     updatedAt = serializers.DateTimeField(source='updated_at', read_only=True)
 
@@ -38,6 +38,8 @@ class UserOwnedModelSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         user = self._request_user()
+        if not attrs.get('id'):
+            attrs.pop('id', None)
         if self.instance is not None and self.instance.user_id != user.pk:
             raise serializers.ValidationError('This object belongs to another user.')
         return attrs
@@ -72,6 +74,8 @@ def sync_nested(parent, relation_name, model, items, parent_field):
 
 
 class TuitionClassSlotSerializer(UserOwnedModelSerializer):
+    date = NullableDateField(required=False, allow_null=True)
+
     class Meta:
         model = TuitionClassSlot
         fields = ['id', 'order', 'date', 'completed', 'createdAt', 'updatedAt']
@@ -90,6 +94,8 @@ class TuitionNoteSerializer(UserOwnedModelSerializer):
 
 
 class TuitionMonthClassDateSerializer(UserOwnedModelSerializer):
+    date = NullableDateField(required=False, allow_null=True)
+
     class Meta:
         model = TuitionMonthClassDate
         fields = ['id', 'order', 'date', 'createdAt', 'updatedAt']
@@ -224,18 +230,21 @@ class TuitionStudentSerializer(UserOwnedModelSerializer):
     guardianContact = serializers.CharField(
         source='guardian_contact', required=False, allow_blank=True
     )
-    monthlyPlannedClasses = serializers.IntegerField(source='monthly_planned_classes')
+    monthlyPlannedClasses = serializers.IntegerField(source='monthly_planned_classes', required=False, default=12)
     monthlyClasses = serializers.IntegerField(source='monthly_planned_classes', read_only=True)
     monthlySalary = NumberDecimalField(
-        source='monthly_salary', max_digits=12, decimal_places=2
+        source='monthly_salary', max_digits=12, decimal_places=2, required=False, default=8000
     )
-    startDate = serializers.DateField(source='start_date')
+    currency = serializers.CharField(required=False, default='BDT')
+    startDate = serializers.DateField(source='start_date', required=False)
     lastPaidDate = NullableDateField(
         source='last_paid_date', required=False, allow_null=True
     )
-    paymentStatus = serializers.CharField(source='payment_status')
-    cardColor = serializers.CharField(source='card_color')
+    paymentStatus = serializers.CharField(source='payment_status', required=False, default='pending')
+    cardColor = serializers.CharField(source='card_color', required=False, default='#4F46E5')
+    description = serializers.CharField(required=False, allow_blank=True, default='')
     activeMonth = serializers.CharField(source='active_month', required=False)
+    completedClasses = serializers.SerializerMethodField()
     classSlots = TuitionClassSlotSerializer(source='class_slots', many=True, required=False)
     notes = TuitionNoteSerializer(many=True, required=False)
     monthHistory = TuitionMonthSnapshotSerializer(
@@ -261,6 +270,7 @@ class TuitionStudentSerializer(UserOwnedModelSerializer):
             'cardColor',
             'description',
             'activeMonth',
+            'completedClasses',
             'classSlots',
             'notes',
             'monthHistory',
@@ -268,12 +278,26 @@ class TuitionStudentSerializer(UserOwnedModelSerializer):
             'updatedAt',
         ]
 
+    def get_completedClasses(self, obj):
+        return obj.class_slots.filter(completed=True).count()
+
     def to_internal_value(self, data):
         data = data.copy()
+        if not data.get('studentName') and data.get('name'):
+            data['studentName'] = data['name']
         if not data.get('classGrade') and data.get('academicLevel'):
             data['classGrade'] = data['academicLevel']
         if not data.get('monthlyPlannedClasses') and data.get('monthlyClasses'):
             data['monthlyPlannedClasses'] = data['monthlyClasses']
+        if not data.get('startDate'):
+            from django.utils import timezone
+            data['startDate'] = timezone.localdate().isoformat()
+        if not data.get('paymentStatus'):
+            data['paymentStatus'] = 'pending'
+        if not data.get('cardColor'):
+            data['cardColor'] = '#4F46E5'
+        if not data.get('currency'):
+            data['currency'] = 'BDT'
         return super().to_internal_value(data)
 
     def _sync_slots_for_count(self, student):
