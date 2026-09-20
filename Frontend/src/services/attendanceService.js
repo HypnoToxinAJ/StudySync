@@ -52,28 +52,31 @@ export const attendanceService = {
     return normalizeCourseType(course?.courseType || course?.classType) === COURSE_TYPES.THEORY;
   },
 
-  // Maximum safe missed classes allowed without marks deduction (THEORY ONLY)
+  // Maximum safe missed classes allowed without marks deduction
+  // Formula: 3-cr: 3, 2-cr: 2, 1.5-cr lab: 1, 0.75-cr lab: 0
   getMaximumSafeMisses: (course) => {
-    if (!attendanceService.isTheory(course)) {
-      return null; // Not applicable for Sessional/Lab
-    }
+    const isTheory = attendanceService.isTheory(course);
     const credit = Number(course?.credit || 3.0);
-    // Formula: maxSafeMissed = credits (e.g. 3-credit -> 3, 2-credit -> 2)
-    return Math.max(1, Math.round(credit));
+    if (isTheory) {
+      if (credit >= 3) return 3;
+      if (credit >= 2) return 2;
+      return Math.max(1, Math.round(credit));
+    } else {
+      // Lab / Sessional course
+      if (credit >= 1.5) return 1;
+      return 0;
+    }
   },
 
   getRemainingSafeMisses: (course) => {
     const maxSafe = attendanceService.getMaximumSafeMisses(course);
-    if (maxSafe === null) return null;
+    if (maxSafe === null || maxSafe === undefined) return 0;
     const missed = Number(course?.missedClasses || 0);
     return Math.max(0, maxSafe - missed);
   },
 
-  // Risk status: 'SAFE', 'LIMIT_REACHED', 'MARKS_DEDUCTION_RISK' for Theory; 'TRACKING' for Lab/Sessional
+  // Risk status: 'SAFE', 'LIMIT_REACHED', 'MARKS_DEDUCTION_RISK'
   getAttendanceRisk: (course) => {
-    if (!attendanceService.isTheory(course)) {
-      return 'TRACKING';
-    }
     const maxSafe = attendanceService.getMaximumSafeMisses(course);
     const missed = Number(course?.missedClasses || 0);
 
@@ -95,45 +98,21 @@ export const attendanceService = {
       ? Number(((attendedClasses / totalClasses) * 100).toFixed(1))
       : 100.0;
 
-    if (!isTheoryCourse) {
-      return {
-        credit,
-        courseType,
-        isTheory: false,
-        totalClasses,
-        attendedClasses,
-        missedClasses,
-        percentage,
-        maxSafeMissed: null,
-        remainingSafe: null,
-        status: 'TRACKING',
-        statusLabel: 'TRACKING',
-        statusMessage: 'Normal attendance tracking active (missed-class penalty limit not applicable).',
-        hasDeductionRisk: false,
-        isLimitReached: false
-      };
-    }
-
     const maxSafeMissed = attendanceService.getMaximumSafeMisses(course);
     const remainingSafe = Math.max(0, maxSafeMissed - missedClasses);
     const riskStatus = attendanceService.getAttendanceRisk(course);
+    const scheduledClasses = Number(course?.scheduledClasses !== undefined ? course.scheduledClasses : (isTheoryCourse ? 39 : 13));
 
-    let statusLabel = 'SAFE';
-    let statusMessage = `You can safely miss ${remainingSafe} more class${remainingSafe === 1 ? '' : 'es'}.`;
-
-    if (riskStatus === 'LIMIT_REACHED') {
-      statusLabel = 'LIMIT REACHED';
-      statusMessage = 'You have reached the maximum safe missed-class limit. Your next absence may trigger a marks deduction.';
-    } else if (riskStatus === 'MARKS_DEDUCTION_RISK') {
-      const exceededBy = missedClasses - maxSafeMissed;
-      statusLabel = 'MARKS DEDUCTION RISK';
-      statusMessage = `You have exceeded the maximum safe missed-class limit by ${exceededBy} class${exceededBy === 1 ? '' : 'es'}. Marks deduction risk is active.`;
-    }
+    let statusLabel = riskStatus === 'MARKS_DEDUCTION_RISK' ? 'MARKS DEDUCTION RISK' : 'SAFE';
+    let statusMessage = riskStatus === 'MARKS_DEDUCTION_RISK'
+      ? `Exceeded safe limit of ${maxSafeMissed} misses! Marks deduction applicable.`
+      : `You can safely miss ${remainingSafe} more class${remainingSafe === 1 ? '' : 'es'}.`;
 
     return {
       credit,
       courseType,
-      isTheory: true,
+      isTheory: isTheoryCourse,
+      scheduledClasses,
       totalClasses,
       attendedClasses,
       missedClasses,

@@ -15,7 +15,89 @@ import { alertService } from '../services/alertService';
 import { useToast } from './ToastContext';
 import { useAuth } from './AuthContext';
 
-const DataContext = createContext();
+const DEFAULT_DATA_CONTEXT = {
+  courses: [],
+  routines: [],
+  assessments: [],
+  semesters: [],
+  tuitions: [],
+  expenses: { budgetLimit: 12000, accounts: [], transactions: [] },
+  shortcuts: [],
+  notes: [],
+  medications: [],
+  medicationSchedules: [],
+  tasks: [],
+  focusData: { totalMinutesThisWeek: 0, sessionsCompletedThisWeek: 0 },
+  activeAlerts: [],
+  sidebarPreferences: null,
+  refreshData: () => {},
+  updateSidebarPreferences: () => {},
+  addRoutine: () => {},
+  updateRoutine: () => {},
+  deleteRoutine: () => {},
+  recordAttendance: () => false,
+  recordMissedClass: () => false,
+  undoAttendance: () => {},
+  undoLastMissed: () => {},
+  updateMissedRecord: () => {},
+  deleteMissedRecord: () => false,
+  deleteAttendanceRecord: () => false,
+  addCourse: () => {},
+  updateCourse: () => {},
+  deleteCourse: () => {},
+  addCTMark: () => false,
+  updateCTMark: () => false,
+  deleteCTMark: () => false,
+  addAssessmentToCourse: () => false,
+  updateAssessmentInCourse: () => false,
+  deleteAssessmentFromCourse: () => false,
+  toggleAssessmentMissed: () => {},
+  addAssessment: () => {},
+  updateAssessment: () => {},
+  deleteAssessment: () => {},
+  addSemester: () => {},
+  addCourseToSemester: () => {},
+  deleteSemester: () => {},
+  addTuitionStudent: () => {},
+  updateTuitionStudent: () => {},
+  deleteTuitionStudent: () => {},
+  updateTuitionClassDate: () => {},
+  startNewTuitionMonth: () => {},
+  addTuitionNote: () => {},
+  updateTuitionNote: () => {},
+  deleteTuitionNote: () => {},
+  logTuitionClass: () => {},
+  addTransaction: () => {},
+  updateTransaction: () => {},
+  deleteTransaction: () => {},
+  updateBudgetLimit: () => {},
+  addDueBorrowRecord: () => {},
+  updateDueBorrowRecord: () => {},
+  deleteDueBorrowRecord: () => {},
+  settleDueBorrowRecord: () => {},
+  reopenDueBorrowRecord: () => {},
+  addShortcut: () => {},
+  togglePinShortcut: () => {},
+  deleteShortcut: () => {},
+  addNote: () => {},
+  updateNote: () => {},
+  togglePinNote: () => {},
+  archiveNote: () => {},
+  toggleChecklistItem: () => {},
+  addMedication: () => {},
+  updateMedication: () => {},
+  toggleMedicationStatus: () => {},
+  logMedicationDose: () => {},
+  dismissAlert: () => {},
+  dismissAllAlerts: () => {},
+  undoDismissAlerts: () => {},
+  restoreAlerts: () => {},
+  toggleTask: () => {},
+  addTask: () => {},
+  logFocusSession: () => {}
+};
+
+const DataContext = createContext(DEFAULT_DATA_CONTEXT);
 
 export const DataProvider = ({ children }) => {
   const { showToast } = useToast();
@@ -1041,4 +1123,4 @@ export const DataProvider = ({ children }) => {
   );
 };
 
-export const useData = () => useContext(DataContext);
+export const useData = () => useContext(DataContext) || DEFAULT_DATA_CONTEXT;

@@ -1,0 +1,92 @@
+// ============================================================================
+// PRISMA SCHEMA: ATTENDANCE & CT MARKS TRACKER (POSTGRESQL)
+// ============================================================================
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum CourseType {
+  THEORY
+  LAB
+}
+
+enum AssessmentType {
+  CT
+  ASSIGNMENT
+  QUIZ
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  courses   Course[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Course {
+  id                String              @id @default(uuid())
+  userId            String
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  courseCode        String              @db.VarChar(30)
+  courseTitle       String              @db.VarChar(200)
+  credit            Float               @default(3.0)
+  type              CourseType          @default(THEORY)
+  faculty           String              @default("Unassigned") @db.VarChar(150)
+  semester          String              @default("5th Semester") @db.VarChar(50)
+  color             String              @default("#4F46E5") @db.VarChar(15)
+  scheduledClasses  Int                 @default(39)
+  maxSafeMisses     Int                 @default(3)
+  
+  // Relations
+  missedHistory     MissedClassRecord[]
+  assessments       Assessment[]
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([userId, courseCode])
+  @@index([userId])
+  @@map("courses")
+}
+
+model MissedClassRecord {
+  id        String     @id @default(uuid())
+  courseId  String
+  course    Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  date      DateTime   @default(now())
+  reason    String     @default("Unexcused Absence") @db.VarChar(255)
+  classType CourseType @default(THEORY)
+  createdAt DateTime   @default(now())
+
+  @@index([courseId, date])
+  @@map("missed_class_records")
+}
+
+model Assessment {
+  id            String         @id @default(uuid())
+  courseId      String
+  course        Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  title         String         @db.VarChar(150)
+  type          AssessmentType @default(CT)
+  obtainedMarks Float          @default(0.0)
+  totalMarks    Float          @default(20.0)
+  isMissed      Boolean        @default(false)
+  date          DateTime       @default(now())
+  bestNConfig   Int?           // Optional override for Top-N count
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([courseId, date])
+  @@map("assessments")
+}

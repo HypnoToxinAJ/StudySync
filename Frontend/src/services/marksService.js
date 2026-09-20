@@ -202,7 +202,88 @@ export const marksService = {
     };
   },
 
-  // Add a CT mark to a course with strict validations (Section 17 & 25)
+  getCourseAssessmentsOverview: (course) => {
+    if (!marksService.isApplicable(course)) {
+      return {
+        isApplicable: false,
+        message: 'Sessional course — CT marks not applicable',
+        items: []
+      };
+    }
+
+    const credit = Number(course?.credit || 3.0);
+    const defaultN = Math.max(1, Math.round(credit));
+    const bestCount = course.bestNConfig || defaultN;
+    const rawAssessments = course.assessments || [];
+
+    const parsed = rawAssessments.map((item, idx) => {
+      const isMissed = Boolean(item.isMissed);
+      const obtained = isMissed ? 0 : Number(item.obtainedMarks !== undefined ? item.obtainedMarks : 0);
+      const total = Number(item.totalMarks || 20);
+      const percentage = total > 0 ? (obtained / total) * 100 : 0;
+      const title = item.title || item.name || `CT ${item.ctNumber || idx + 1}`;
+      const type = String(item.type || 'CT').toUpperCase();
+      const date = item.date ? String(item.date).split('T')[0] : '2026-06-10';
+
+      return {
+        id: item.id || `ast-${idx}`,
+        title,
+        type,
+        obtainedMarks: obtained,
+        totalMarks: total,
+        percentage,
+        isMissed,
+        date,
+        isBestSelected: false
+      };
+    });
+
+    const sorted = [...parsed].sort((a, b) => {
+      if (b.percentage !== a.percentage) return b.percentage - a.percentage;
+      return b.obtainedMarks - a.obtainedMarks;
+    });
+
+    const topN = sorted.slice(0, Math.min(bestCount, sorted.length));
+    const topNIds = new Set(topN.map(a => a.id));
+
+    let bestObtainedSum = 0;
+    let bestTotalSum = 0;
+    topN.forEach(a => {
+      bestObtainedSum += a.obtainedMarks;
+      bestTotalSum += a.totalMarks;
+    });
+
+    bestObtainedSum = Number(bestObtainedSum.toFixed(1));
+    const bestPercentage = bestTotalSum > 0
+      ? Number(((bestObtainedSum / bestTotalSum) * 100).toFixed(1))
+      : 0;
+
+    let rating = 'Average';
+    if (bestPercentage >= 90) rating = 'Excellent';
+    else if (bestPercentage >= 80) rating = 'Good';
+    else if (bestPercentage >= 70) rating = 'Average';
+    else rating = 'Needs Improvement';
+
+    const items = parsed.map(item => ({
+      ...item,
+      isBestSelected: topNIds.has(item.id)
+    }));
+
+    return {
+      isApplicable: true,
+      message: `Best ${bestCount} selected`,
+      bestCount,
+      totalAssessmentsCount: parsed.length,
+      bestObtainedSum,
+      bestTotalSum,
+      bestPercentage,
+      bestScoreFormatted: `${bestObtainedSum} / ${bestTotalSum} Marks`,
+      rating,
+      items
+    };
+  },
+
+  // Add a CT / Assessment mark to a course
   addCTMarkToCourse: (courseId, markData) => {
     const courses = attendanceService.getCourses();
     const index = courses.findIndex(c => c.id === courseId || c.courseId === courseId);
@@ -215,17 +296,24 @@ export const marksService = {
       return { success: false, error: 'CT marks cannot be added to Sessional or Lab courses.' };
     }
 
-    const structure = marksService.getCourseCTStructure(course);
-    const ctNumber = Number(markData.ctNumber);
+    if (!course.assessments) course.assessments = [];
 
-    if (!Number.isInteger(ctNumber) || ctNumber < 1 || ctNumber > structure.totalCTs) {
-      return {
-        success: false,
-        error: `CT Number must be between 1 and ${structure.totalCTs} for this ${course.credit}-credit course.`
-      };
+    // Derive or auto-detect CT number
+    let ctNumber = markData.ctNumber !== undefined && markData.ctNumber !== null && markData.ctNumber !== ''
+      ? Number(markData.ctNumber)
+      : null;
+
+    if (!ctNumber || isNaN(ctNumber) || ctNumber < 1) {
+      const titleStr = String(markData.title || markData.name || '');
+      const match = titleStr.match(/CT\s*[-–#]?\s*(\d+)/i) || titleStr.match(/(\d+)/);
+      if (match && match[1]) {
+        ctNumber = Number(match[1]);
+      } else {
+        ctNumber = course.assessments.length + 1;
+      }
     }
 
-    const obtainedMarks = Number(markData.obtainedMarks);
+    const obtainedMarks = markData.isMissed ? 0 : Number(markData.obtainedMarks || 0);
     const totalMarks = Number(markData.totalMarks || 20);
 
     if (isNaN(obtainedMarks) || obtainedMarks < 0) {
@@ -235,30 +323,19 @@ export const marksService = {
       return { success: false, error: `Obtained marks (${obtainedMarks}) cannot exceed total marks (${totalMarks}).` };
     }
 
-    if (!course.assessments) course.assessments = [];
-
-    // Duplicate check: do not allow duplicate marks for the same CT number in the same course
-    const duplicate = course.assessments.find(a => {
-      const num = Number(a.ctNumber || a.ct_number || (a.name && (a.name.match(/CT\s*[-–]?\s*(\d+)/i) || [])[1]));
-      return num === ctNumber;
-    });
-
-    if (duplicate) {
-      return {
-        success: false,
-        error: `CT-${ctNumber} already exists for this course. Please edit or delete the existing mark instead.`
-      };
-    }
+    const type = String(markData.type || (markData.title?.toLowerCase().includes('assignment') ? 'ASSIGNMENT' : 'CT')).toUpperCase();
+    const title = markData.title || markData.name || (type === 'CT' ? `CT ${ctNumber}` : `${type} ${ctNumber}`);
 
     const newAst = {
-      id: `ct-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: `ast-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       ctNumber,
-      name: `CT-${ctNumber}`,
-      type: 'CT',
+      name: title,
+      title,
+      type,
       totalMarks,
       obtainedMarks,
       date: markData.date || new Date().toISOString().split('T')[0],
-      isMissed: false,
+      isMissed: Boolean(markData.isMissed),
       notes: markData.notes || '',
       createdAt: new Date().toISOString()
     };
@@ -289,34 +366,34 @@ export const marksService = {
     if (astIndex === -1) return { success: false, error: 'CT mark record not found.' };
 
     const existing = course.assessments[astIndex];
-    const structure = marksService.getCourseCTStructure(course);
 
-    const ctNumber = Number(updatedData.ctNumber ?? existing.ctNumber);
-    if (!Number.isInteger(ctNumber) || ctNumber < 1 || ctNumber > structure.totalCTs) {
-      return { success: false, error: `CT Number must be between 1 and ${structure.totalCTs}.` };
+    let ctNumber = updatedData.ctNumber !== undefined && updatedData.ctNumber !== null && updatedData.ctNumber !== ''
+      ? Number(updatedData.ctNumber)
+      : existing.ctNumber;
+
+    if (!ctNumber || isNaN(ctNumber) || ctNumber < 1) {
+      ctNumber = astIndex + 1;
     }
 
     const totalMarks = Number(updatedData.totalMarks ?? existing.totalMarks ?? 20);
-    const obtainedMarks = Number(updatedData.obtainedMarks ?? existing.obtainedMarks ?? 0);
+    const obtainedMarks = updatedData.isMissed ? 0 : Number(updatedData.obtainedMarks ?? existing.obtainedMarks ?? 0);
 
     if (obtainedMarks < 0 || obtainedMarks > totalMarks) {
-      return { success: false, error: 'Obtained marks must be between 0 and total marks.' };
+      return { success: false, error: `Obtained marks (${obtainedMarks}) cannot exceed total marks (${totalMarks}).` };
     }
 
-    // Check duplicate if CT number changed
-    if (ctNumber !== existing.ctNumber) {
-      const duplicate = course.assessments.find(a => a.id !== markId && Number(a.ctNumber) === ctNumber);
-      if (duplicate) {
-        return { success: false, error: `CT-${ctNumber} already exists for this course.` };
-      }
-    }
+    const type = String(updatedData.type || existing.type || 'CT').toUpperCase();
+    const title = updatedData.title || updatedData.name || existing.title || existing.name || `CT ${ctNumber}`;
 
     const updated = {
       ...existing,
       ctNumber,
-      name: `CT-${ctNumber}`,
+      name: title,
+      title,
+      type,
       totalMarks,
       obtainedMarks,
+      isMissed: Boolean(updatedData.isMissed !== undefined ? updatedData.isMissed : existing.isMissed),
       date: updatedData.date || existing.date,
       notes: updatedData.notes !== undefined ? updatedData.notes : existing.notes,
       updatedAt: new Date().toISOString()

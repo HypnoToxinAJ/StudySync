@@ -21,7 +21,7 @@ import { navigationSelectors } from '../../store/selectors/navigationSelectors';
 
 export const Sidebar = ({ isCollapsed, onToggle }) => {
   const { user, logout } = useAuth();
-  const { activeAlerts, sidebarPreferences } = useData();
+  const { activeAlerts = [], sidebarPreferences = null } = useData() || {};
 
   const navItems = navigationSelectors.getVisibleNavigationSections(sidebarPreferences);
 
@@ -76,10 +76,10 @@ export const Sidebar = ({ isCollapsed, onToggle }) => {
               {!isCollapsed && <span>{item.label}</span>}
 
               {/* Alert Badge for Dashboard */}
-              {item.path === '/' && activeAlerts.length > 0 && (
+              {item.path === '/' && (activeAlerts || []).length > 0 && (
                 <span className={`ml-auto px-1.5 py-0.5 text-[10px] font-bold rounded-full ${isCollapsed ? 'absolute top-1 right-1' : ''
                   } bg-rose-500 text-white shadow-sm`}>
-                  {activeAlerts.length}
+                  {(activeAlerts || []).length}
                 </span>
               )}
             </NavLink>

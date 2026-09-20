@@ -6,7 +6,16 @@ import { combineLocalDateTime } from '../../utils/assessmentUtils';
 import { RelatedLinksManager } from '../assessments/RelatedLinksManager';
 
 export const QuickAddModal = ({ isOpen, onClose }) => {
-  const { addRoutine, addAssessment, addCourse, addTuitionStudent, addTransaction, addShortcut, courses } = useData();
+  const data = useData() || {};
+  const {
+    addRoutine = () => {},
+    addAssessment = () => {},
+    addCourse = () => {},
+    addTuitionStudent = () => {},
+    addTransaction = () => {},
+    addShortcut = () => {},
+    courses = []
+  } = data;
   const [activeType, setActiveType] = useState('routine');
 
   // Form states
@@ -158,12 +167,12 @@ export const QuickAddModal = ({ isOpen, onClose }) => {
                 <select
                   value={astForm.courseId}
                   onChange={(e) => {
-                    const course = courses.find(item => item.courseId === e.target.value);
+                    const course = (courses || []).find(item => item.courseId === e.target.value);
                     setAstForm({ ...astForm, courseId: e.target.value, courseTitle: course?.courseTitle || '' });
                   }}
                   className="w-full min-h-11 px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl"
                 >
-                  {courses.map(course => <option key={course.id} value={course.courseId}>{course.courseId} · {course.courseTitle}</option>)}
+                  {(courses || []).map(course => <option key={course.id || course.courseId} value={course.courseId}>{course.courseId} · {course.courseTitle}</option>)}
                 </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
