@@ -1484,6 +1484,50 @@ class CourseRoutineSyncTests(APITestCase):
         # Entire transaction should have rolled back
         self.assertEqual(Course.objects.filter(user=user).count(), 0)
 
+    def test_10_delete_all_courses(self):
+        """TEST 10: DELETE /api/v1/academics/courses/ with mode=all deletes all courses and linked attendance/CT records."""
+        user = self.get_user()
+        self.authenticate()
+
+        c1 = Course.objects.create(user=user, course_id='CSE-311', course_title='Database', credit=3.0)
+        c2 = Course.objects.create(user=user, course_id='CSE-312', course_title='Database Lab', credit=1.5)
+        AttendanceRecord.objects.create(user=user, course=c1, date='2026-09-10', status='missed')
+        CourseAssessment.objects.create(user=user, course=c1, name='CT 1', total_marks=20, obtained_marks=18, date='2026-09-12')
+
+        self.assertEqual(Course.objects.filter(user=user).count(), 2)
+        self.assertEqual(AttendanceRecord.objects.filter(user=user).count(), 1)
+        self.assertEqual(CourseAssessment.objects.filter(user=user).count(), 1)
+
+        res = self.client.delete('/api/v1/academics/courses/?mode=all')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data['success'])
+
+        self.assertEqual(Course.objects.filter(user=user).count(), 0)
+        self.assertEqual(AttendanceRecord.objects.filter(user=user).count(), 0)
+        self.assertEqual(CourseAssessment.objects.filter(user=user).count(), 0)
+
+    def test_11_delete_all_courses_records_only(self):
+        """TEST 11: DELETE /api/v1/academics/courses/ with mode=records_only resets attendance and CT marks without deleting courses."""
+        user = self.get_user()
+        self.authenticate()
+
+        c1 = Course.objects.create(user=user, course_id='CSE-311', course_title='Database', credit=3.0, missed_classes=3, total_classes=12, attended_classes=9)
+        AttendanceRecord.objects.create(user=user, course=c1, date='2026-09-10', status='missed')
+        CourseAssessment.objects.create(user=user, course=c1, name='CT 1', total_marks=20, obtained_marks=18, date='2026-09-12')
+
+        res = self.client.delete('/api/v1/academics/courses/?mode=records_only')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.data['success'])
+
+        self.assertEqual(Course.objects.filter(user=user).count(), 1)
+        c1.refresh_from_db()
+        self.assertEqual(c1.missed_classes, 0)
+        self.assertEqual(c1.attended_classes, 0)
+        self.assertEqual(c1.total_classes, 0)
+
+        self.assertEqual(AttendanceRecord.objects.filter(user=user).count(), 0)
+        self.assertEqual(CourseAssessment.objects.filter(user=user).count(), 0)
+
 
 
 

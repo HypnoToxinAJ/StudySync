@@ -61,7 +61,9 @@ export const courseApi = {
     }
   },
 
-  syncWithRoutine: (payload = {}) => apiClient.post('/academics/courses/sync-routine/', payload)
+  syncWithRoutine: (payload = {}) => apiClient.post('/academics/courses/sync-routine/', payload),
+
+  deleteAll: (mode = 'all') => apiClient.delete(`/academics/courses/?mode=${encodeURIComponent(mode)}`)
 };
 
 export default courseApi;

@@ -379,6 +379,12 @@ export const attendanceService = {
     return cleared;
   },
 
+  deleteAllCourses: () => {
+    attendanceService.saveCourses([]);
+    storageService.set(storageService.KEYS.ASSESSMENTS, []);
+    return [];
+  },
+
   // Synchronize courses directly with class routines!
   syncCoursesWithRoutines: (routines = []) => {
     if (!Array.isArray(routines)) return attendanceService.getCourses();

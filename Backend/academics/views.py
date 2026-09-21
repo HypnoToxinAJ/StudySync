@@ -182,6 +182,73 @@ class CourseListCreateView(generics.ListCreateAPIView):
 
         return super().create(request, *args, **kwargs)
 
+    @transaction.atomic
+    def delete(self, request, *args, **kwargs):
+        """Delete all courses and linked attendance/CT records, or clear attendance/CT records only."""
+        from .models import AttendanceRecord, CourseAssessment, AssessmentEvent, Routine
+        from core.models import SyncDocument
+        user = request.user
+        mode = request.query_params.get('mode', 'all')
+
+        if mode == 'records_only':
+            deleted_att, _ = AttendanceRecord.objects.filter(user=user).delete()
+            deleted_ct, _ = CourseAssessment.objects.filter(user=user).delete()
+            deleted_ev, _ = AssessmentEvent.objects.filter(user=user).delete()
+            updated_courses = Course.objects.filter(user=user).update(
+                missed_classes=0,
+                total_classes=0,
+                attended_classes=0,
+            )
+            try:
+                SyncDocument.objects.filter(user=user, key='studysync_assessments').update(data=[])
+                c_doc = SyncDocument.objects.filter(user=user, key='studysync_courses').first()
+                if c_doc and isinstance(c_doc.data, list):
+                    for c in c_doc.data:
+                        c['missedClasses'] = 0
+                        c['totalClasses'] = 0
+                        c['attendedClasses'] = 0
+                        c['history'] = []
+                        c['assessments'] = []
+                    c_doc.save(update_fields=['data', 'updated_at'])
+            except Exception:
+                pass
+            return Response(
+                {
+                    'success': True,
+                    'mode': 'records_only',
+                    'updated_courses': updated_courses,
+                    'deleted_attendance': deleted_att,
+                    'deleted_assessments': deleted_ct,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # Mode 'all': Delete all courses, attendance records, CT marks, and unlink routine slots
+        deleted_att, _ = AttendanceRecord.objects.filter(user=user).delete()
+        deleted_ct, _ = CourseAssessment.objects.filter(user=user).delete()
+        deleted_ev, _ = AssessmentEvent.objects.filter(user=user).delete()
+        Routine.objects.filter(user=user).update(course=None)
+        deleted_courses, _ = Course.objects.filter(user=user).delete()
+
+        try:
+            SyncDocument.objects.filter(
+                user=user,
+                key__in=['studysync_courses', 'studysync_assessments']
+            ).update(data=[])
+        except Exception:
+            pass
+
+        return Response(
+            {
+                'success': True,
+                'mode': 'all',
+                'deleted_courses': deleted_courses,
+                'deleted_attendance': deleted_att,
+                'deleted_assessments': deleted_ct,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CourseSerializer

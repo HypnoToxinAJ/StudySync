@@ -47,6 +47,7 @@ const DEFAULT_DATA_CONTEXT = {
   updateCourse: () => {},
   deleteCourse: () => {},
   syncCoursesWithRoutine: async () => ({}),
+  deleteAllCourses: async () => false,
   addCTMark: () => false,
   updateCTMark: () => false,
   deleteCTMark: () => false,
@@ -460,6 +461,28 @@ export const DataProvider = ({ children }) => {
         },
         courses: updated
       };
+    }
+  };
+
+  const deleteAllCourses = async (mode = 'all') => {
+    try {
+      if (mode === 'records_only') {
+        attendanceService.clearAttendanceAndMarks();
+        setCourses(attendanceService.getCourses());
+        showToast('All attendance records and CT marks reset to zero.', 'info');
+        await courseApi.deleteAll('records_only').catch(() => {});
+      } else {
+        attendanceService.deleteAllCourses();
+        setCourses([]);
+        showToast('All courses, attendance records, and CT marks deleted.', 'info');
+        await courseApi.deleteAll('all').catch(() => {});
+      }
+      refreshData();
+      return true;
+    } catch (err) {
+      console.warn('Delete all courses error:', err);
+      showToast('Error deleting courses.', 'error');
+      return false;
     }
   };
 
@@ -1192,6 +1215,7 @@ export const DataProvider = ({ children }) => {
       updateCourse,
       deleteCourse,
       syncCoursesWithRoutine,
+      deleteAllCourses,
       // Inline course assessment & CT actions
       addCTMark,
       updateCTMark,

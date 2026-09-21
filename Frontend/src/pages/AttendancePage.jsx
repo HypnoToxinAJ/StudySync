@@ -30,6 +30,7 @@ export const AttendancePage = () => {
     addCourse,
     updateCourse,
     deleteCourse,
+    deleteAllCourses,
     syncCoursesWithRoutine,
     recordAttendance,
     undoLastMissed,
@@ -45,6 +46,11 @@ export const AttendancePage = () => {
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [lastSyncedTime, setLastSyncedTime] = useState(null);
   const [isArchivedExpanded, setIsArchivedExpanded] = useState(false);
+
+  // Delete All State
+  const [isDeleteAllModalOpen, setIsDeleteAllModalOpen] = useState(false);
+  const [deleteAllMode, setDeleteAllMode] = useState('all'); // 'all' | 'records_only'
+  const [isDeletingAll, setIsDeletingAll] = useState(false);
 
   // Split active courses from archived (removed from routine) courses
   const activeCourses = useMemo(() => courses.filter(c => c.isActive !== false), [courses]);
@@ -66,6 +72,19 @@ export const AttendancePage = () => {
       console.error('Course synchronization error:', err);
     } finally {
       setIsSyncing(false);
+    }
+  };
+
+  const handleConfirmDeleteAll = async () => {
+    if (isDeletingAll) return;
+    setIsDeletingAll(true);
+    try {
+      await deleteAllCourses(deleteAllMode);
+      setIsDeleteAllModalOpen(false);
+    } catch (err) {
+      console.error('Delete all courses failed:', err);
+    } finally {
+      setIsDeletingAll(false);
     }
   };
 
@@ -358,6 +377,17 @@ export const AttendancePage = () => {
             >
               <Plus className="w-4 h-4" />
               <span>+ Add Course</span>
+            </button>
+
+            <button
+              id="delete-all-courses-btn"
+              onClick={() => setIsDeleteAllModalOpen(true)}
+              disabled={courses.length === 0}
+              className="flex items-center space-x-1.5 px-3.5 py-2 bg-rose-950/25 hover:bg-rose-950/50 border border-rose-800/40 hover:border-rose-700/70 active:scale-[0.98] text-rose-300 hover:text-rose-200 rounded-xl text-xs font-bold shadow-sm transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Delete all courses or reset attendance & CT marks"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+              <span>Delete All</span>
             </button>
           </div>
         </div>
@@ -1251,6 +1281,104 @@ export const AttendancePage = () => {
               className="px-5 py-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 transition-all"
             >
               Done
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal 6: Delete All Courses Confirmation Modal */}
+      <Modal
+        isOpen={isDeleteAllModalOpen}
+        onClose={() => !isDeletingAll && setIsDeleteAllModalOpen(false)}
+        title="Delete All: Attendance & CT Marks"
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4 text-xs">
+          <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-rose-950/30 border border-rose-800/50 text-rose-300">
+            <div className="p-2 rounded-xl bg-rose-900/40 text-rose-400 shrink-0 mt-0.5">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div className="space-y-1">
+              <h4 className="font-bold text-white text-sm">Clear Attendance &amp; CT Marks</h4>
+              <p className="leading-relaxed">
+                Choose whether to remove all courses completely or only reset student tracking history and marks.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2.5">
+            {/* Option 1: Delete All Courses & Records */}
+            <div
+              onClick={() => setDeleteAllMode('all')}
+              className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-start space-x-3 ${
+                deleteAllMode === 'all'
+                  ? 'bg-rose-950/40 border-rose-600 shadow-md shadow-rose-950/30'
+                  : 'bg-[#111827] border-[#1e293b] hover:border-slate-700'
+              }`}
+            >
+              <input
+                type="radio"
+                name="deleteAllMode"
+                checked={deleteAllMode === 'all'}
+                onChange={() => setDeleteAllMode('all')}
+                className="mt-1 text-rose-600 focus:ring-0"
+              />
+              <div>
+                <span className="font-bold text-white block">Delete All Courses &amp; Records</span>
+                <span className="text-[11px] text-slate-400 mt-0.5 block leading-relaxed">
+                  Permanently deletes all {courses.length} courses, attendance records, and CT marks from your database. You can re-sync from Routine anytime.
+                </span>
+              </div>
+            </div>
+
+            {/* Option 2: Reset Attendance & CT Marks Only */}
+            <div
+              onClick={() => setDeleteAllMode('records_only')}
+              className={`p-3.5 rounded-xl border cursor-pointer transition-all flex items-start space-x-3 ${
+                deleteAllMode === 'records_only'
+                  ? 'bg-amber-950/40 border-amber-500 shadow-md shadow-amber-950/30'
+                  : 'bg-[#111827] border-[#1e293b] hover:border-slate-700'
+              }`}
+            >
+              <input
+                type="radio"
+                name="deleteAllMode"
+                checked={deleteAllMode === 'records_only'}
+                onChange={() => setDeleteAllMode('records_only')}
+                className="mt-1 text-amber-500 focus:ring-0"
+              />
+              <div>
+                <span className="font-bold text-white block">Reset Attendance &amp; CT Marks Only</span>
+                <span className="text-[11px] text-slate-400 mt-0.5 block leading-relaxed">
+                  Keeps all course cards, but resets attendance records, absence counts, and CT marks back to 0.
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800">
+            <button
+              type="button"
+              disabled={isDeletingAll}
+              onClick={() => setIsDeleteAllModalOpen(false)}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold transition-all text-xs"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={isDeletingAll}
+              onClick={handleConfirmDeleteAll}
+              className="px-5 py-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded-xl font-bold shadow-md transition-all text-xs flex items-center space-x-1.5 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>
+                {isDeletingAll
+                  ? 'Processing...'
+                  : deleteAllMode === 'all'
+                  ? 'Delete All Courses'
+                  : 'Reset All Records'}
+              </span>
             </button>
           </div>
         </div>
