@@ -35,20 +35,28 @@ export const courseApi = {
   },
 
   delete: async (id, courseCode = null) => {
+    const isSynthetic = id && String(id).startsWith('course-');
+    const primaryKey = isSynthetic && courseCode ? courseCode : (id || courseCode);
+    const fallbackKey = primaryKey === id ? courseCode : id;
+    const queryParam = courseCode ? `?courseId=${encodeURIComponent(courseCode)}` : '';
+
     try {
       return await apiClient.delete(
-        `/academics/courses/${encodeURIComponent(id)}/`
+        `/academics/courses/${encodeURIComponent(primaryKey)}/${queryParam}`,
+        courseCode ? { courseId: courseCode } : undefined
       );
     } catch (err) {
-      if (err?.status === 404 && courseCode && String(courseCode) !== String(id)) {
+      if (fallbackKey && String(fallbackKey) !== String(primaryKey)) {
         try {
           return await apiClient.delete(
-            `/academics/courses/${encodeURIComponent(courseCode)}/`
+            `/academics/courses/${encodeURIComponent(fallbackKey)}/${queryParam}`,
+            courseCode ? { courseId: courseCode } : undefined
           );
-        } catch {
-          // Ignored if already removed
+        } catch (innerErr) {
+          if (innerErr?.status === 404) return null;
         }
       }
+      if (err?.status === 404) return null;
       throw err;
     }
   }

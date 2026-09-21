@@ -8,6 +8,7 @@ import { marksService } from '../services/marksService';
 import { cgpaService } from '../services/cgpaService';
 import { tuitionService } from '../services/tuitionService';
 import { tuitionApi } from '../services/tuitionApi';
+import { courseApi } from '../services/courseApi';
 import { expenseService } from '../services/expenseService';
 import { shortcutService } from '../services/shortcutService';
 import { focusService } from '../services/focusService';
@@ -192,6 +193,48 @@ export const DataProvider = ({ children }) => {
     };
   }, [session?.access_token]);
 
+  // Course synchronization with Django & PostgreSQL database
+  useEffect(() => {
+    let active = true;
+
+    const syncCoursesWithServer = async () => {
+      if (!session?.access_token) return;
+      try {
+        const remoteCourses = await courseApi.list();
+        const localCourses = attendanceService.getCourses();
+
+        if (Array.isArray(remoteCourses) && remoteCourses.length > 0) {
+          const mapped = remoteCourses.map(rc => ({
+            ...rc,
+            id: rc.id,
+            courseId: rc.courseId || rc.course_id,
+            courseTitle: rc.courseTitle || rc.course_title,
+            credit: Number(rc.credit || 3),
+            courseType: rc.courseType || rc.course_type || 'THEORY',
+            history: Array.isArray(rc.history) ? rc.history : [],
+            assessments: Array.isArray(rc.assessments) ? rc.assessments : []
+          }));
+          if (active) {
+            attendanceService.saveCourses(mapped);
+            setCourses(attendanceService.getCourses());
+          }
+        } else if ((!remoteCourses || remoteCourses.length === 0) && localCourses.length > 0) {
+          for (const c of localCourses) {
+            void courseApi.create(c).catch(() => {});
+          }
+        }
+      } catch (err) {
+        console.debug('Course cloud sync deferred:', err?.message || err);
+      }
+    };
+
+    void syncCoursesWithServer();
+
+    return () => {
+      active = false;
+    };
+  }, [session?.access_token]);
+
   const updateSidebarPreferences = (preferences) => {
     storageService.set(storageService.KEYS.SIDEBAR_PREFERENCES, preferences);
     setSidebarPreferences(preferences);
@@ -282,14 +325,19 @@ export const DataProvider = ({ children }) => {
     return deleteAttendanceRecord(courseId, recordId);
   };
 
-  const addCourse = (data) => {
+  const addCourse = async (data) => {
     const created = attendanceService.addCourse(data);
     refreshData();
     showToast('New course added!');
+    try {
+      await courseApi.create(created);
+    } catch (err) {
+      console.warn('Backend course create sync warning:', err);
+    }
     return created;
   };
 
-  const updateCourse = (id, data) => {
+  const updateCourse = async (id, data) => {
     const updated = attendanceService.updateCourse(id, data);
     if (updated) {
       const allRoutines = routineService.getAll();
@@ -317,16 +365,30 @@ export const DataProvider = ({ children }) => {
       if (changed) {
         routineService.saveAll(updatedRoutines);
       }
+      try {
+        await courseApi.update(updated.id || id, updated);
+      } catch (err) {
+        console.warn('Backend course update sync warning:', err);
+      }
     }
     refreshData();
     showToast('Course updated and synced with routine & backend!');
     return updated;
   };
 
-  const deleteCourse = (id) => {
+  const deleteCourse = async (id) => {
+    const currentCourses = attendanceService.getCourses();
+    const target = currentCourses.find(c => c.id === id || c.courseId === id);
+    const targetCode = target?.courseId || id;
+    const targetId = target?.id || id;
     attendanceService.deleteCourse(id);
     refreshData();
     showToast('Course, routine classes, attendance, and CT marks deleted.');
+    try {
+      await courseApi.delete(targetId, targetCode);
+    } catch (err) {
+      console.warn('Backend course delete sync warning:', err);
+    }
   };
 
   // --- Course CT Marks Handlers ---

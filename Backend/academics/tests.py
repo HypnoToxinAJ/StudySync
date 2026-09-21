@@ -1093,5 +1093,88 @@ class AssessmentApiTests(APITestCase):
         self.assertEqual(sync_res.data['driveStatus'], 'uploaded')
 
 
+@override_settings(
+    SUPABASE_JWT_SECRET='test-only-supabase-secret-with-sufficient-length',
+    SUPABASE_JWT_ISSUER='https://test-project.supabase.co/auth/v1',
+    SUPABASE_JWT_AUDIENCE='authenticated',
+    SUPABASE_JWT_ALGORITHMS=('HS256',),
+)
+class CourseApiTests(APITestCase):
+    def make_token(self, email='student@example.com', subject='22222222-2222-4222-8222-222222222222'):
+        now = datetime.now(timezone.utc)
+        return jwt.encode(
+            {
+                'iss': 'https://test-project.supabase.co/auth/v1',
+                'aud': 'authenticated',
+                'sub': subject,
+                'email': email,
+                'role': 'authenticated',
+                'iat': now,
+                'exp': now + timedelta(minutes=5),
+            },
+            'test-only-supabase-secret-with-sufficient-length',
+            algorithm='HS256',
+        )
+
+    def authenticate(self, **kwargs):
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f'Bearer {self.make_token(**kwargs)}'
+        )
+
+    def test_course_create_update_and_delete_with_cascades(self):
+        self.authenticate()
+
+        # 1. Create a course
+        create_res = self.client.post(
+            '/api/v1/academics/courses/',
+            {
+                'courseId': 'CSE-317',
+                'courseTitle': 'Artificial Intelligence',
+                'credit': 3.0,
+                'courseType': 'THEORY',
+                'faculty': 'Dr. Mahfuzul Islam',
+                'semester': '5th Semester',
+            },
+            format='json',
+        )
+        self.assertEqual(create_res.status_code, 201)
+        course_id = create_res.data['courseId']
+        db_id = create_res.data['id']
+
+        course_obj = Course.objects.get(id=db_id)
+        self.assertEqual(course_obj.course_id, 'CSE-317')
+
+        # 2. Add an attendance record and CT assessment linked to this course
+        AttendanceRecord.objects.create(
+            user=course_obj.user,
+            course=course_obj,
+            date='2026-09-21',
+            status='missed',
+            reason='Unexcused Absence',
+        )
+        CourseAssessment.objects.create(
+            user=course_obj.user,
+            course=course_obj,
+            name='CT 1: Fundamentals',
+            assessment_type='CT',
+            total_marks=20,
+            obtained_marks=18,
+            date='2026-09-21',
+        )
+
+        self.assertEqual(AttendanceRecord.objects.filter(course=course_obj).count(), 1)
+        self.assertEqual(CourseAssessment.objects.filter(course=course_obj).count(), 1)
+
+        # 3. Delete course by courseId (e.g. CSE-317)
+        del_res = self.client.delete(f'/api/v1/academics/courses/{course_id}/')
+        self.assertEqual(del_res.status_code, 204)
+
+        # 4. Verify course and all related records are deleted from database
+        self.assertFalse(Course.objects.filter(id=db_id).exists())
+        self.assertEqual(AttendanceRecord.objects.filter(course_id=db_id).count(), 0)
+        self.assertEqual(CourseAssessment.objects.filter(course_id=db_id).count(), 0)
+
+
+
 
 

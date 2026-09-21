@@ -53,12 +53,13 @@ export const AttendancePage = () => {
 
   const [isCourseModalOpen, setIsCourseModalOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState(null);
+  const [courseToDelete, setCourseToDelete] = useState(null);
   const [courseForm, setCourseForm] = useState({
-    courseId: 'CSE-317',
-    courseTitle: 'Artificial Intelligence',
+    courseId: '',
+    courseTitle: '',
     credit: 3.0,
     courseType: COURSE_TYPES.THEORY,
-    faculty: 'Dr. Mahfuzul Islam',
+    faculty: '',
     semester: '5th Semester',
     scheduledClasses: 39,
     color: '#8B5CF6'
@@ -91,15 +92,15 @@ export const AttendancePage = () => {
     setIsHistoryModalOpen(true);
   };
 
-  // Open Add / Edit Course Modal
+  // Open Add Course Modal with clean initial state
   const handleOpenAddCourse = () => {
     setEditingCourse(null);
     setCourseForm({
-      courseId: 'CSE-317',
-      courseTitle: 'Artificial Intelligence',
+      courseId: '',
+      courseTitle: '',
       credit: 3.0,
       courseType: COURSE_TYPES.THEORY,
-      faculty: 'Dr. Mahfuzul Islam',
+      faculty: '',
       semester: '5th Semester',
       scheduledClasses: 39,
       color: '#8B5CF6'
@@ -107,6 +108,7 @@ export const AttendancePage = () => {
     setIsCourseModalOpen(true);
   };
 
+  // Open Edit Course Modal
   const handleOpenEditCourse = (course) => {
     setEditingCourse(course);
     setCourseForm({
@@ -122,14 +124,41 @@ export const AttendancePage = () => {
     setIsCourseModalOpen(true);
   };
 
-  const handleSaveCourseSubmit = (e) => {
+  // Open Delete Course Confirmation Modal
+  const handleDeleteCourseClick = (course) => {
+    setCourseToDelete(course);
+  };
+
+  const handleConfirmDeleteCourse = async () => {
+    if (!courseToDelete) return;
+    const target = courseToDelete;
+    setCourseToDelete(null);
+    if (editingCourse && (editingCourse.id === target.id || editingCourse.courseId === target.courseId)) {
+      setIsCourseModalOpen(false);
+      setEditingCourse(null);
+    }
+    await deleteCourse(target.id || target.courseId);
+  };
+
+  const handleSaveCourseSubmit = async (e) => {
     e.preventDefault();
-    if (!courseForm.courseId || !courseForm.courseTitle) return;
+    const cleanCode = (courseForm.courseId || '').trim().toUpperCase();
+    const cleanTitle = (courseForm.courseTitle || '').trim();
+    if (!cleanCode || !cleanTitle) return;
 
     if (editingCourse) {
-      updateCourse(editingCourse.id, courseForm);
+      await updateCourse(editingCourse.id, {
+        ...courseForm,
+        courseId: cleanCode,
+        courseTitle: cleanTitle,
+        oldCourseId: editingCourse.courseId
+      });
     } else {
-      addCourse(courseForm);
+      await addCourse({
+        ...courseForm,
+        courseId: cleanCode,
+        courseTitle: cleanTitle
+      });
     }
     setIsCourseModalOpen(false);
   };
@@ -291,6 +320,26 @@ export const AttendancePage = () => {
       {/* 2. COURSE CARDS GRID (3-COLUMN EXACT PIXEL-FOR-PIXEL REPLICA)        */}
       {/* ==================================================================== */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {courses.length === 0 && (
+          <div className="col-span-full py-16 px-6 rounded-3xl bg-[#111827] border border-dashed border-[#1f293d] flex flex-col items-center justify-center text-center space-y-4 shadow-xl">
+            <div className="w-16 h-16 rounded-2xl bg-indigo-950/60 border border-indigo-800/50 flex items-center justify-center">
+              <BookOpen className="w-8 h-8 text-indigo-400" />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-white">No Courses Added Yet</h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                Start tracking attendance limits and CT marks by adding your courses.
+              </p>
+            </div>
+            <button
+              onClick={handleOpenAddCourse}
+              className="flex items-center space-x-2 px-5 py-2.5 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98]"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Add Course</span>
+            </button>
+          </div>
+        )}
         {courses.map((course) => {
           const courseKey = course.id || course.courseId;
           const stats = attendanceService.calculateAttendanceStats(course);
@@ -306,11 +355,10 @@ export const AttendancePage = () => {
           return (
             <div
               key={courseKey}
-              className={`rounded-3xl bg-[#111827] border transition-all flex flex-col justify-between p-5 space-y-4 shadow-xl ${
-                stats.hasDeductionRisk
+              className={`rounded-3xl bg-[#111827] border transition-all flex flex-col justify-between p-5 space-y-4 shadow-xl ${stats.hasDeductionRisk
                   ? 'border-rose-500/70 shadow-rose-950/20 ring-1 ring-rose-500/30'
                   : 'border-[#1f293d] hover:border-slate-700/80'
-              }`}
+                }`}
             >
               <div className="space-y-4">
                 {/* -------------------------------------------------------- */}
@@ -333,22 +381,36 @@ export const AttendancePage = () => {
 
                     <div className="flex items-center space-x-2">
                       <span
-                        className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${
-                          stats.isTheory
+                        className={`text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full border ${stats.isTheory
                             ? 'bg-indigo-950/70 text-indigo-300 border-indigo-700/50'
                             : 'bg-cyan-950/70 text-cyan-300 border-cyan-700/50'
-                        }`}
+                          }`}
                       >
                         {course.courseType?.toUpperCase() || (stats.isTheory ? 'THEORY' : 'LAB')}
                       </span>
 
-                      <button
-                        onClick={() => handleOpenEditCourse(course)}
-                        className="p-1 text-slate-400 hover:text-white transition-colors"
-                        title="Edit Course"
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
+                      {/* Edit Course (pencil) and Delete Course (trash) side-by-side */}
+                      <div className="flex items-center bg-[#0c1220] border border-[#1e293b] rounded-lg p-0.5 space-x-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditCourse(course)}
+                          className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition-colors"
+                          title="Edit Course"
+                          aria-label={`Edit ${course.courseId}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        <div className="w-[1px] h-3 bg-slate-800" />
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCourseClick(course)}
+                          className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-950/50 rounded transition-colors"
+                          title="Delete Course"
+                          aria-label={`Delete ${course.courseId}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -423,9 +485,8 @@ export const AttendancePage = () => {
 
                     <div className="w-full h-1.5 bg-[#1e293b] rounded-full overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          stats.hasDeductionRisk ? 'bg-[#f43f5e]' : 'bg-cyan-500'
-                        }`}
+                        className={`h-full rounded-full transition-all duration-300 ${stats.hasDeductionRisk ? 'bg-[#f43f5e]' : 'bg-cyan-500'
+                          }`}
                         style={{ width: `${capacityBarPercentage}%` }}
                       />
                     </div>
@@ -492,13 +553,12 @@ export const AttendancePage = () => {
                       </span>
 
                       <span
-                        className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${
-                          overview.rating === 'Excellent'
+                        className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${overview.rating === 'Excellent'
                             ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30'
                             : overview.rating === 'Good'
-                            ? 'bg-cyan-950/60 text-cyan-400 border-cyan-500/30'
-                            : 'bg-amber-950/60 text-amber-400 border-amber-500/30'
-                        }`}
+                              ? 'bg-cyan-950/60 text-cyan-400 border-cyan-500/30'
+                              : 'bg-amber-950/60 text-amber-400 border-amber-500/30'
+                          }`}
                       >
                         {overview.rating}
                       </span>
@@ -551,11 +611,10 @@ export const AttendancePage = () => {
                                       {ast.title}
                                     </span>
                                     <span
-                                      className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${
-                                        ast.type === 'ASSIGNMENT'
+                                      className={`text-[9px] font-bold px-1.5 py-0.2 rounded border ${ast.type === 'ASSIGNMENT'
                                           ? 'bg-cyan-950/60 text-cyan-300 border-cyan-800/50'
                                           : 'bg-blue-950/60 text-blue-300 border-blue-800/50'
-                                      }`}
+                                        }`}
                                     >
                                       {ast.type}
                                     </span>
@@ -647,6 +706,26 @@ export const AttendancePage = () => {
             </div>
           );
         })}
+
+        {courses.length > 0 && (
+          <button
+            type="button"
+            onClick={handleOpenAddCourse}
+            className="rounded-3xl border-2 border-dashed border-[#1f293d] hover:border-indigo-500/50 bg-[#111827]/40 hover:bg-[#111827]/80 p-8 flex flex-col items-center justify-center text-center space-y-3 transition-all group min-h-[360px] cursor-pointer"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-[#161e31] group-hover:bg-indigo-600/20 text-slate-400 group-hover:text-indigo-400 border border-[#2a374f] group-hover:border-indigo-500/50 flex items-center justify-center transition-all shadow-sm">
+              <Plus className="w-6 h-6" />
+            </div>
+            <div>
+              <span className="text-sm font-bold text-slate-300 group-hover:text-white transition-colors block">
+                + Add Course
+              </span>
+              <span className="text-xs text-slate-500 mt-1 block">
+                Add theory or lab course
+              </span>
+            </div>
+          </button>
+        )}
       </div>
 
       {/* ==================================================================== */}
@@ -813,20 +892,39 @@ export const AttendancePage = () => {
             </div>
           </div>
 
-          <div className="flex items-center justify-end space-x-2 pt-3 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={() => setIsCourseModalOpen(false)}
-              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold transition-all"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-5 py-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl font-bold shadow-md transition-all"
-            >
-              {editingCourse ? 'Save Changes' : 'Create Course'}
-            </button>
+          <div className="flex items-center justify-between pt-3 border-t border-slate-800">
+            {editingCourse ? (
+              <button
+                type="button"
+                onClick={() => {
+                  const target = editingCourse;
+                  setIsCourseModalOpen(false);
+                  setCourseToDelete(target);
+                }}
+                className="px-3.5 py-2 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/50 text-rose-400 hover:text-rose-300 rounded-xl font-bold flex items-center space-x-1.5 transition-all text-xs"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Course</span>
+              </button>
+            ) : (
+              <div />
+            )}
+
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => setIsCourseModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold transition-all text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl font-bold shadow-md transition-all text-xs"
+              >
+                {editingCourse ? 'Save Changes' : 'Create Course'}
+              </button>
+            </div>
           </div>
         </form>
       </Modal>
@@ -941,6 +1039,51 @@ export const AttendancePage = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Modal 4: Delete Course Confirmation Modal */}
+      <Modal
+        isOpen={Boolean(courseToDelete)}
+        onClose={() => setCourseToDelete(null)}
+        title="Delete Course?"
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-rose-950/30 border border-rose-800/50">
+            <div className="p-2 rounded-xl bg-rose-900/40 text-rose-400 shrink-0 mt-0.5">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div className="space-y-1 text-xs">
+              <h4 className="font-bold text-white text-sm">
+                Permanently delete {courseToDelete?.courseId}?
+              </h4>
+              <p className="text-slate-300 font-medium">
+                {courseToDelete?.courseTitle}
+              </p>
+              <p className="text-rose-300/90 leading-relaxed pt-1">
+                This will permanently remove this course along with all of its attendance records, absence history, and recorded CT marks from your account and database. This action cannot be undone.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800">
+            <button
+              type="button"
+              onClick={() => setCourseToDelete(null)}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-bold transition-all text-xs"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirmDeleteCourse}
+              className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-bold shadow-md transition-all text-xs flex items-center space-x-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete Course</span>
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

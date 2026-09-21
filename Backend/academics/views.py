@@ -199,9 +199,12 @@ class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
             payload_code = self.request.data.get('courseId') or self.request.data.get('course_id')
 
         # 1. Direct match on ID or course_id
+        query_code = self.request.query_params.get('code') or self.request.query_params.get('courseId') or self.request.query_params.get('course_id')
         q = Q(id=pk) | Q(course_id__iexact=pk)
         if payload_code:
             q |= Q(course_id__iexact=payload_code)
+        if query_code:
+            q |= Q(course_id__iexact=query_code)
         obj = queryset.filter(q).first()
 
         # 2. Fuzzy code match if PK is a composite frontend ID (e.g. course-timestamp-CSE311)
@@ -209,7 +212,7 @@ class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
             clean_pk = re.sub(r'[^A-Za-z0-9]', '', str(pk)).upper()
             for candidate in queryset:
                 clean_candidate = re.sub(r'[^A-Za-z0-9]', '', candidate.course_id).upper()
-                if clean_candidate and (clean_candidate in clean_pk or clean_pk.endswith(clean_candidate)):
+                if clean_candidate and (clean_candidate == clean_pk or clean_candidate in clean_pk or clean_pk.endswith(clean_candidate)):
                     obj = candidate
                     break
 
