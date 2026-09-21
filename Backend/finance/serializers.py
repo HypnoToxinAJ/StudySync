@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.db import transaction as db_transaction
+from django.db.models import Q
 from rest_framework import serializers
 
 from .models import (
@@ -10,6 +11,44 @@ from .models import (
     FinanceProfile,
     Transaction,
 )
+
+
+def normalize_account_type(value):
+    val = str(value or '').lower()
+    if 'mobile' in val or 'bkash' in val or 'nagad' in val or 'rocket' in val or val == 'acc-mobile':
+        return Account.AccountType.MOBILE_BANKING
+    if 'bank' in val or 'dbbl' in val or 'city' in val or val == 'acc-bank':
+        return Account.AccountType.BANK
+    if 'card' in val or 'visa' in val or 'master' in val or val == 'acc-card':
+        return Account.AccountType.CARD
+    return Account.AccountType.CASH
+
+
+def get_or_create_finance_profile(user):
+    profile, _ = FinanceProfile.objects.get_or_create(
+        user=user,
+        defaults={'budget_limit': Decimal('12000.00'), 'currency': 'BDT'}
+    )
+    standards = [
+        {'slug': 'acc-mobile', 'name': 'Mobile Banking', 'account_type': Account.AccountType.MOBILE_BANKING, 'color': '#EC4899', 'icon_name': 'Smartphone'},
+        {'slug': 'acc-bank', 'name': 'Bank Account', 'account_type': Account.AccountType.BANK, 'color': '#3B82F6', 'icon_name': 'Building'},
+        {'slug': 'acc-cash', 'name': 'Physical Wallet Cash', 'account_type': Account.AccountType.CASH, 'color': '#10B981', 'icon_name': 'Coins'},
+        {'slug': 'acc-card', 'name': 'Credit/Debit Card', 'account_type': Account.AccountType.CARD, 'color': '#8B5CF6', 'icon_name': 'CreditCard'},
+    ]
+    for sa in standards:
+        Account.objects.get_or_create(
+            user=user,
+            account_type=sa['account_type'],
+            defaults={
+                'id': f"{user.pk}_{sa['slug']}",
+                'profile': profile,
+                'name': sa['name'],
+                'opening_balance': Decimal('0.00'),
+                'color': sa['color'],
+                'icon_name': sa['icon_name'],
+            }
+        )
+    return profile
 
 
 class NumberDecimalField(serializers.DecimalField):
@@ -79,6 +118,7 @@ class AccountSerializer(UserOwnedModelSerializer):
     )
     balance = serializers.SerializerMethodField()
     iconName = serializers.CharField(source='icon_name', required=False, allow_blank=True)
+    id = serializers.SerializerMethodField()
 
     class Meta:
         model = Account
@@ -94,6 +134,21 @@ class AccountSerializer(UserOwnedModelSerializer):
             'updatedAt',
         ]
 
+    def get_id(self, obj):
+        std_map = {
+            Account.AccountType.MOBILE_BANKING: 'acc-mobile',
+            Account.AccountType.BANK: 'acc-bank',
+            Account.AccountType.CASH: 'acc-cash',
+            Account.AccountType.CARD: 'acc-card',
+        }
+        return std_map.get(obj.account_type, str(obj.id))
+
+    def to_internal_value(self, data):
+        ret = super().to_internal_value(data)
+        if 'id' in data:
+            ret['id'] = data['id']
+        return ret
+
     def get_balance(self, obj):
         balance = obj.opening_balance
         for item in obj.transactions.all():
@@ -105,10 +160,7 @@ class AccountSerializer(UserOwnedModelSerializer):
 
     def create(self, validated_data):
         user = self._request_user()
-        try:
-            profile = FinanceProfile.objects.get(user=user)
-        except FinanceProfile.DoesNotExist as exc:
-            raise serializers.ValidationError('Create a finance profile first.') from exc
+        profile = get_or_create_finance_profile(user)
         validated_data['profile'] = profile
         return super().create(validated_data)
 
@@ -116,7 +168,7 @@ class AccountSerializer(UserOwnedModelSerializer):
 class TransactionSerializer(UserOwnedModelSerializer):
     type = serializers.CharField(source='transaction_type')
     amount = NumberDecimalField(max_digits=14, decimal_places=2)
-    accountId = serializers.CharField(source='account_id')
+    accountId = serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
@@ -133,6 +185,25 @@ class TransactionSerializer(UserOwnedModelSerializer):
             'updatedAt',
         ]
 
+    def get_accountId(self, obj):
+        if not getattr(obj, 'account', None):
+            return 'acc-cash'
+        std_map = {
+            Account.AccountType.MOBILE_BANKING: 'acc-mobile',
+            Account.AccountType.BANK: 'acc-bank',
+            Account.AccountType.CASH: 'acc-cash',
+            Account.AccountType.CARD: 'acc-card',
+        }
+        return std_map.get(obj.account.account_type, str(obj.account_id))
+
+    def to_internal_value(self, data):
+        ret = super().to_internal_value(data)
+        if 'accountId' in data:
+            ret['account_id'] = data['accountId']
+        elif 'account_id' in data:
+            ret['account_id'] = data['account_id']
+        return ret
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
         transaction_type = attrs.get(
@@ -143,35 +214,56 @@ class TransactionSerializer(UserOwnedModelSerializer):
             Transaction.Category.TUITION_INCOME,
             Transaction.Category.OTHER,
         ):
-            raise serializers.ValidationError(
-                {'category': 'Income must use Tuition Income or Other.'}
+            attrs['category'] = (
+                Transaction.Category.TUITION_INCOME
+                if 'tuition' in str(category).lower()
+                else Transaction.Category.OTHER
             )
         if (
             transaction_type == Transaction.TransactionType.EXPENSE
             and category == Transaction.Category.TUITION_INCOME
         ):
-            raise serializers.ValidationError(
-                {'category': 'Tuition Income cannot be used for an expense.'}
-            )
+            attrs['category'] = Transaction.Category.OTHER
+
         account_id = attrs.get('account_id')
         if account_id:
-            account = Account.objects.filter(pk=account_id).first()
-            if account and account.user_id != self._request_user().pk:
+            user = self._request_user()
+            profile = get_or_create_finance_profile(user)
+            norm_type = normalize_account_type(account_id)
+            account = Account.objects.filter(user=user, profile=profile).filter(
+                Q(pk=account_id) | Q(account_type=account_id) | Q(account_type=norm_type)
+            ).first()
+            if not account:
                 raise serializers.ValidationError({'accountId': 'Invalid account.'})
+            attrs['account_id'] = account.pk
         return attrs
 
     def create(self, validated_data):
         user = self._request_user()
-        try:
-            profile = FinanceProfile.objects.get(user=user)
-            account = Account.objects.get(
-                pk=validated_data.get('account_id'), user=user, profile=profile
-            )
-        except (FinanceProfile.DoesNotExist, Account.DoesNotExist) as exc:
-            raise serializers.ValidationError({'accountId': 'Invalid account.'}) from exc
+        profile = get_or_create_finance_profile(user)
+        raw_account_id = validated_data.pop('account_id', None)
+        norm_type = normalize_account_type(raw_account_id)
+        account = Account.objects.filter(user=user, profile=profile).filter(
+            Q(pk=raw_account_id) | Q(account_type=raw_account_id) | Q(account_type=norm_type)
+        ).first()
+        if not account:
+            account = Account.objects.filter(user=user, profile=profile, account_type=Account.AccountType.CASH).first()
         validated_data.update(profile=profile, account=account)
-        validated_data.pop('account_id', None)
         return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        user = self._request_user()
+        if 'account_id' in validated_data:
+            raw_account_id = validated_data.pop('account_id')
+            profile = get_or_create_finance_profile(user)
+            norm_type = normalize_account_type(raw_account_id)
+            account = Account.objects.filter(user=user, profile=profile).filter(
+                Q(pk=raw_account_id) | Q(account_type=raw_account_id) | Q(account_type=norm_type)
+            ).first()
+            if not account:
+                raise serializers.ValidationError({'accountId': 'Invalid account.'})
+            validated_data['account'] = account
+        return super().update(instance, validated_data)
 
 
 class DueBorrowRecordSerializer(UserOwnedModelSerializer):
@@ -223,12 +315,14 @@ class DueBorrowRecordSerializer(UserOwnedModelSerializer):
 
     def create(self, validated_data):
         user = self._request_user()
-        try:
-            profile = FinanceProfile.objects.get(user=user)
-        except FinanceProfile.DoesNotExist as exc:
-            raise serializers.ValidationError('Create a finance profile first.') from exc
+        profile = get_or_create_finance_profile(user)
         validated_data['profile'] = profile
         return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        validated_data.pop('user', None)
+        validated_data.pop('profile', None)
+        return super().update(instance, validated_data)
 
 
 class DueBorrowSettlementSerializer(UserOwnedModelSerializer):
@@ -302,34 +396,88 @@ class FinanceProfileSerializer(UserOwnedModelSerializer):
     dueBorrowRecords = DueBorrowRecordSerializer(
         source='due_borrow_records', many=True, required=False
     )
+    summary = serializers.SerializerMethodField()
 
     class Meta:
         model = FinanceProfile
         fields = [
+            'id',
             'budgetLimit',
             'currency',
             'accounts',
             'transactions',
             'dueBorrowRecords',
+            'summary',
+            'createdAt',
+            'updatedAt',
         ]
 
+    def get_summary(self, obj):
+        from django.utils import timezone
+        now = timezone.localdate()
+        accounts = list(obj.accounts.all().prefetch_related('transactions'))
+        transactions = list(obj.transactions.all())
+        due_records = list(obj.due_borrow_records.all())
+
+        total_balance = sum(
+            (acc.opening_balance + sum(
+                (tx.amount if tx.transaction_type == Transaction.TransactionType.INCOME else -tx.amount)
+                for tx in acc.transactions.all()
+            ))
+            for acc in accounts
+        )
+
+        month_txs = [tx for tx in transactions if tx.date.year == now.year and tx.date.month == now.month]
+        total_income = sum(tx.amount for tx in month_txs if tx.transaction_type == Transaction.TransactionType.INCOME)
+        total_expense = sum(tx.amount for tx in month_txs if tx.transaction_type == Transaction.TransactionType.EXPENSE)
+        budget_limit = obj.budget_limit
+        budget_remaining = max(Decimal('0'), budget_limit - total_expense)
+        budget_progress = float(round((total_expense / budget_limit * 100), 1)) if budget_limit > 0 else 0.0
+
+        total_i_owe = sum(
+            (r.amount - r.settled_amount) for r in due_records if r.direction == DueBorrowRecord.Direction.I_OWE and r.status != DueBorrowRecord.Status.SETTLED
+        )
+        total_owed_to_me = sum(
+            (r.amount - r.settled_amount) for r in due_records if r.direction == DueBorrowRecord.Direction.OWED_TO_ME and r.status != DueBorrowRecord.Status.SETTLED
+        )
+
+        return {
+            'totalBalance': float(total_balance),
+            'totalIncome': float(total_income),
+            'totalExpense': float(total_expense),
+            'budgetLimit': float(budget_limit),
+            'budgetSpent': float(total_expense),
+            'budgetRemaining': float(budget_remaining),
+            'budgetProgress': budget_progress,
+            'isOverBudget': total_expense > budget_limit,
+            'dueBorrowSummary': {
+                'totalIOwe': float(total_i_owe),
+                'totalOwedToMe': float(total_owed_to_me),
+                'netBalance': float(total_owed_to_me - total_i_owe),
+            },
+        }
+
     def _upsert_accounts(self, profile, accounts):
-        existing = {str(item.pk): item for item in profile.accounts.all()}
+        existing_by_pk = {str(item.pk): item for item in profile.accounts.all()}
+        existing_by_type = {item.account_type: item for item in profile.accounts.all()}
         for raw_attrs in accounts:
             attrs = dict(raw_attrs)
             attrs.pop('balance', None)
             account_id = str(attrs.pop('id', '') or '')
-            account = existing.pop(account_id, None) if account_id else None
+            norm_type = normalize_account_type(attrs.get('account_type', account_id))
+            account = existing_by_pk.pop(account_id, None) or existing_by_type.get(norm_type)
+            if account and str(account.pk) in existing_by_pk:
+                existing_by_pk.pop(str(account.pk), None)
             attrs.update(user=profile.user, profile=profile)
             if account is None:
                 if account_id:
-                    attrs['id'] = account_id
+                    attrs['id'] = f"{profile.user.pk}_{account_id}" if Account.objects.filter(pk=account_id).exists() else account_id
                 Account.objects.create(**attrs)
             else:
                 for field, value in attrs.items():
                     setattr(account, field, value)
                 account.save()
-        return existing
+        return existing_by_pk
 
     def _sync_transactions(self, profile, transactions):
         existing = {str(item.pk): item for item in profile.transactions.all()}
@@ -338,12 +486,16 @@ class FinanceProfileSerializer(UserOwnedModelSerializer):
             item_id = str(attrs.pop('id', '') or '')
             item = existing.pop(item_id, None) if item_id else None
             account_id = attrs.pop('account_id')
-            try:
-                account = profile.accounts.get(pk=account_id, user=profile.user)
-            except Account.DoesNotExist as exc:
+            norm_type = normalize_account_type(account_id)
+            account = profile.accounts.filter(
+                Q(pk=account_id) | Q(account_type=account_id) | Q(account_type=norm_type)
+            ).first()
+            if not account:
+                account = profile.accounts.filter(account_type=Account.AccountType.CASH).first()
+            if not account:
                 raise serializers.ValidationError(
                     {'transactions': f'Unknown accountId: {account_id}.'}
-                ) from exc
+                )
             attrs.update(user=profile.user, profile=profile, account=account)
             if item is None:
                 if item_id:
@@ -383,7 +535,14 @@ class FinanceProfileSerializer(UserOwnedModelSerializer):
         if transactions is not None:
             self._sync_transactions(profile, transactions)
         if stale_accounts:
-            Account.objects.filter(pk__in=stale_accounts).delete()
+            Account.objects.filter(pk__in=stale_accounts).exclude(
+                account_type__in=[
+                    Account.AccountType.MOBILE_BANKING,
+                    Account.AccountType.BANK,
+                    Account.AccountType.CASH,
+                    Account.AccountType.CARD,
+                ]
+            ).delete()
         if due_records is not None:
             sync_nested(
                 profile,

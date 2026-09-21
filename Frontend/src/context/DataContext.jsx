@@ -10,6 +10,7 @@ import { tuitionService } from '../services/tuitionService';
 import { tuitionApi } from '../services/tuitionApi';
 import { courseApi } from '../services/courseApi';
 import { expenseService } from '../services/expenseService';
+import { expenseApi } from '../services/expenseApi';
 import { shortcutService } from '../services/shortcutService';
 import { focusService } from '../services/focusService';
 import { alertService } from '../services/alertService';
@@ -189,6 +190,63 @@ export const DataProvider = ({ children }) => {
     };
 
     void syncTuitionWithServer();
+
+    return () => {
+      active = false;
+    };
+  }, [session?.access_token]);
+
+  // Expenses synchronization with Django & Supabase PostgreSQL
+  useEffect(() => {
+    let active = true;
+
+    const syncExpensesWithServer = async () => {
+      if (!session?.access_token) return;
+      try {
+        const remoteProfile = await expenseApi.getProfile();
+        const localData = expenseService.getData();
+
+        const serverHasData = Boolean(
+          (remoteProfile?.transactions && remoteProfile.transactions.length > 0) ||
+          (remoteProfile?.dueBorrowRecords && remoteProfile.dueBorrowRecords.length > 0)
+        );
+        const localHasData = Boolean(
+          (localData?.transactions && localData.transactions.length > 0) ||
+          (localData?.dueBorrowRecords && localData.dueBorrowRecords.length > 0)
+        );
+
+        if (!serverHasData && localHasData) {
+          // Push existing local data to server
+          const synced = await expenseApi.syncBatch({
+            budgetLimit: localData.budgetLimit,
+            accounts: localData.accounts,
+            transactions: localData.transactions,
+            dueBorrowRecords: localData.dueBorrowRecords,
+          });
+          if (active && synced) {
+            expenseService.saveData({
+              budgetLimit: synced.budgetLimit,
+              accounts: synced.accounts,
+              transactions: synced.transactions,
+              dueBorrowRecords: synced.dueBorrowRecords,
+            });
+            setExpenses(expenseService.getData());
+          }
+        } else if (remoteProfile && active) {
+          expenseService.saveData({
+            budgetLimit: remoteProfile.budgetLimit,
+            accounts: remoteProfile.accounts,
+            transactions: remoteProfile.transactions,
+            dueBorrowRecords: remoteProfile.dueBorrowRecords,
+          });
+          setExpenses(expenseService.getData());
+        }
+      } catch (err) {
+        console.debug('Expense cloud sync deferred:', err?.message || err);
+      }
+    };
+
+    void syncExpensesWithServer();
 
     return () => {
       active = false;
@@ -926,58 +984,160 @@ export const DataProvider = ({ children }) => {
   };
 
   // --- Expense Handlers ---
-  const addTransaction = (txData) => {
-    expenseService.addTransaction(txData);
+  const addTransaction = async (txData) => {
+    const localTx = expenseService.addTransaction(txData);
     refreshData();
     showToast(txData.type === 'income' ? 'Income logged!' : 'Expense recorded!', txData.type === 'income' ? 'success' : 'warning');
+    if (session?.access_token) {
+      try {
+        const serverTx = await expenseApi.createTransaction({
+          ...txData,
+          id: localTx?.id,
+        });
+        if (serverTx?.id && serverTx.id !== localTx?.id) {
+          const data = expenseService.getData();
+          const idx = data.transactions.findIndex(t => t.id === localTx.id);
+          if (idx !== -1) {
+            data.transactions[idx] = { ...data.transactions[idx], id: serverTx.id };
+            expenseService.saveData(data);
+            refreshData();
+          }
+        }
+      } catch (err) {
+        console.debug('Cloud addTransaction deferred:', err?.message || err);
+      }
+    }
+    return localTx;
   };
 
-  const updateTransaction = (id, updatedData) => {
-    expenseService.updateTransaction(id, updatedData);
+  const updateTransaction = async (id, updatedData) => {
+    const updated = expenseService.updateTransaction(id, updatedData);
     refreshData();
     showToast('Transaction updated.');
+    if (session?.access_token) {
+      try {
+        await expenseApi.updateTransaction(id, updatedData);
+      } catch (err) {
+        console.debug('Cloud updateTransaction deferred:', err?.message || err);
+      }
+    }
+    return updated;
   };
 
-  const deleteTransaction = (id) => {
-    expenseService.deleteTransaction(id);
+  const deleteTransaction = async (id) => {
+    const res = expenseService.deleteTransaction(id);
     refreshData();
     showToast('Transaction removed.');
+    if (session?.access_token) {
+      try {
+        await expenseApi.deleteTransaction(id);
+      } catch (err) {
+        console.debug('Cloud deleteTransaction deferred:', err?.message || err);
+      }
+    }
+    return res;
   };
 
-  const updateBudgetLimit = (newLimit) => {
-    expenseService.updateBudgetLimit(newLimit);
+  const updateBudgetLimit = async (newLimit) => {
+    const res = expenseService.updateBudgetLimit(newLimit);
     refreshData();
     showToast('Budget updated.');
+    if (session?.access_token) {
+      try {
+        await expenseApi.updateBudget(newLimit);
+      } catch (err) {
+        console.debug('Cloud updateBudget deferred:', err?.message || err);
+      }
+    }
+    return res;
   };
 
-  const addDueBorrowRecord = (recordData) => {
-    expenseService.addDueBorrowRecord(recordData);
+  const addDueBorrowRecord = async (recordData) => {
+    const localRecord = expenseService.addDueBorrowRecord(recordData);
     refreshData();
     showToast('Due/Borrow record added.');
+    if (session?.access_token) {
+      try {
+        const serverRecord = await expenseApi.createDueBorrow({
+          ...recordData,
+          id: localRecord?.id,
+        });
+        if (serverRecord?.id && serverRecord.id !== localRecord?.id) {
+          const data = expenseService.getData();
+          const idx = data.dueBorrowRecords.findIndex(r => r.id === localRecord.id);
+          if (idx !== -1) {
+            data.dueBorrowRecords[idx] = { ...data.dueBorrowRecords[idx], id: serverRecord.id };
+            expenseService.saveData(data);
+            refreshData();
+          }
+        }
+      } catch (err) {
+        console.debug('Cloud addDueBorrowRecord deferred:', err?.message || err);
+      }
+    }
+    return localRecord;
   };
 
-  const updateDueBorrowRecord = (id, updatedData) => {
-    expenseService.updateDueBorrowRecord(id, updatedData);
+  const updateDueBorrowRecord = async (id, updatedData) => {
+    const updated = expenseService.updateDueBorrowRecord(id, updatedData);
     refreshData();
     showToast('Due/Borrow record updated.');
+    if (session?.access_token) {
+      try {
+        await expenseApi.updateDueBorrow(id, updatedData);
+      } catch (err) {
+        console.debug('Cloud updateDueBorrowRecord deferred:', err?.message || err);
+      }
+    }
+    return updated;
   };
 
-  const deleteDueBorrowRecord = (id) => {
-    expenseService.deleteDueBorrowRecord(id);
+  const deleteDueBorrowRecord = async (id) => {
+    const res = expenseService.deleteDueBorrowRecord(id);
     refreshData();
     showToast('Due/Borrow record removed.');
+    if (session?.access_token) {
+      try {
+        await expenseApi.deleteDueBorrow(id);
+      } catch (err) {
+        console.debug('Cloud deleteDueBorrowRecord deferred:', err?.message || err);
+      }
+    }
+    return res;
   };
 
-  const settleDueBorrowRecord = (id, settlementOptions = {}) => {
-    expenseService.settleDueBorrowRecord(id, settlementOptions);
+  const settleDueBorrowRecord = async (id, settlementOptions = {}) => {
+    const res = expenseService.settleDueBorrowRecord(id, settlementOptions);
     refreshData();
     showToast('Due/Borrow record settled.');
+    if (session?.access_token) {
+      try {
+        await expenseApi.settleDueBorrow(id, {
+          amount: settlementOptions.amount,
+          date: settlementOptions.date,
+          note: settlementOptions.note,
+          accountId: settlementOptions.accountId,
+          createTransaction: settlementOptions.logTransaction,
+        });
+      } catch (err) {
+        console.debug('Cloud settleDueBorrowRecord deferred:', err?.message || err);
+      }
+    }
+    return res;
   };
 
-  const reopenDueBorrowRecord = (id) => {
-    expenseService.reopenDueBorrowRecord(id);
+  const reopenDueBorrowRecord = async (id) => {
+    const res = expenseService.reopenDueBorrowRecord(id);
     refreshData();
     showToast('Due/Borrow record reopened.');
+    if (session?.access_token) {
+      try {
+        await expenseApi.reopenDueBorrow(id);
+      } catch (err) {
+        console.debug('Cloud reopenDueBorrowRecord deferred:', err?.message || err);
+      }
+    }
+    return res;
   };
 
   // --- Shortcuts Handlers ---
