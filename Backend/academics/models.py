@@ -69,6 +69,7 @@ class Course(UserOwnedModel):
     requires_review = models.BooleanField(default=False)
     source = models.CharField(max_length=16, choices=Source.choices, default=Source.MANUAL)
     import_id = models.CharField(max_length=128, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
 
     class Meta:
         ordering = ['course_id', 'course_title']
@@ -86,7 +87,10 @@ class Course(UserOwnedModel):
                 name='academic_course_attended_lte_total',
             ),
         ]
-        indexes = [models.Index(fields=['user', 'semester', 'course_id'])]
+        indexes = [
+            models.Index(fields=['user', 'semester', 'course_id']),
+            models.Index(fields=['user', 'is_active', 'course_id']),
+        ]
 
     def __str__(self):
         return f'{self.course_id} - {self.course_title}'

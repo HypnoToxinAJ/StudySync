@@ -38,6 +38,7 @@ export const attendanceService = {
         totalClasses: total,
         attendedClasses: attended,
         missedClasses: missed,
+        isActive: course.isActive !== false,
         history: Array.isArray(course.history) ? course.history : [],
         assessments: Array.isArray(course.assessments) ? course.assessments : []
       };
@@ -46,6 +47,72 @@ export const attendanceService = {
 
   saveCourses: (courses) => {
     storageService.set(storageService.KEYS.COURSES, courses);
+  },
+
+  syncCoursesFromRoutine: (backendResponseCourses = []) => {
+    if (!Array.isArray(backendResponseCourses) || backendResponseCourses.length === 0) {
+      return attendanceService.getCourses();
+    }
+    const existingCourses = attendanceService.getCourses();
+    const existingMap = new Map();
+    existingCourses.forEach(c => {
+      const code = String(c.courseId || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+      if (code) existingMap.set(code, c);
+    });
+
+    const updatedCourses = backendResponseCourses.map(backendCourse => {
+      const norm = String(backendCourse.courseId || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+      const existing = existingMap.get(norm);
+      const courseType = normalizeCourseType(backendCourse.courseType || backendCourse.classType);
+      const isTheory = courseType === COURSE_TYPES.THEORY;
+      const credit = Number(backendCourse.credit || 3.0);
+
+      const history = (backendCourse.history && backendCourse.history.length > 0)
+        ? backendCourse.history
+        : (existing?.history || []);
+      const assessments = (backendCourse.assessments && backendCourse.assessments.length > 0)
+        ? backendCourse.assessments
+        : (existing?.assessments || []);
+
+      const missed = backendCourse.missedClasses !== undefined && backendCourse.missedClasses !== null
+        ? Number(backendCourse.missedClasses)
+        : Number(existing?.missedClasses || 0);
+      const total = backendCourse.totalClasses !== undefined && backendCourse.totalClasses !== null
+        ? Number(backendCourse.totalClasses)
+        : Number(existing?.totalClasses || 0);
+      const attended = backendCourse.attendedClasses !== undefined && backendCourse.attendedClasses !== null
+        ? Number(backendCourse.attendedClasses)
+        : Number(existing?.attendedClasses || 0);
+
+      return {
+        ...existing,
+        ...backendCourse,
+        id: backendCourse.id || existing?.id || `course-${Date.now()}-${norm}`,
+        courseId: backendCourse.courseId || existing?.courseId || norm,
+        courseTitle: backendCourse.courseTitle || existing?.courseTitle || norm,
+        credit,
+        courseType,
+        assessmentApplicable: backendCourse.assessmentApplicable ?? isTheory,
+        bestAssessmentCount: backendCourse.bestAssessmentCount ?? (isTheory ? Math.max(1, Math.round(credit)) : 0),
+        isActive: backendCourse.isActive !== false,
+        totalClasses: total,
+        attendedClasses: attended,
+        missedClasses: missed,
+        history,
+        assessments
+      };
+    });
+
+    const updatedNorms = new Set(updatedCourses.map(c => String(c.courseId || '').trim().toUpperCase().replace(/[\s\-_]/g, '')));
+    existingCourses.forEach(ec => {
+      const norm = String(ec.courseId || '').trim().toUpperCase().replace(/[\s\-_]/g, '');
+      if (norm && !updatedNorms.has(norm)) {
+        updatedCourses.push(ec);
+      }
+    });
+
+    attendanceService.saveCourses(updatedCourses);
+    return updatedCourses;
   },
 
   isTheory: (course) => {

@@ -59,7 +59,9 @@ export const courseApi = {
       if (err?.status === 404) return null;
       throw err;
     }
-  }
+  },
+
+  syncWithRoutine: (payload = {}) => apiClient.post('/academics/courses/sync-routine/', payload)
 };
 
 export default courseApi;

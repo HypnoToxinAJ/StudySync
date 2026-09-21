@@ -46,6 +46,7 @@ const DEFAULT_DATA_CONTEXT = {
   addCourse: () => {},
   updateCourse: () => {},
   deleteCourse: () => {},
+  syncCoursesWithRoutine: async () => ({}),
   addCTMark: () => false,
   updateCTMark: () => false,
   deleteCTMark: () => false,
@@ -388,6 +389,77 @@ export const DataProvider = ({ children }) => {
       await courseApi.delete(targetId, targetCode);
     } catch (err) {
       console.warn('Backend course delete sync warning:', err);
+    }
+  };
+
+  const syncCoursesWithRoutine = async (fallbackRoutines = null) => {
+    try {
+      const routineList = fallbackRoutines || routines || routineService.getAll();
+      const payload = {
+        routines: Array.isArray(routineList) ? routineList.map(r => ({
+          courseId: r.courseId || r.course_code,
+          courseTitle: r.courseTitle || r.course_title,
+          credit: r.credit,
+          courseType: r.courseType || r.classType,
+          faculty: r.teacherName || r.faculty,
+          color: r.color,
+          section: r.section,
+          group: r.group
+        })) : []
+      };
+
+      const res = await courseApi.syncWithRoutine(payload);
+      if (res && res.success && Array.isArray(res.courses)) {
+        attendanceService.syncCoursesFromRoutine(res.courses);
+        const updated = attendanceService.getCourses();
+        setCourses(updated);
+        return {
+          success: true,
+          summary: res.summary || {
+            total_routine_courses: res.courses.length,
+            added: 0,
+            updated: 0,
+            archived: 0,
+            reactivated: 0,
+            unchanged: res.courses.length
+          },
+          courses: updated
+        };
+      }
+
+      const localSynced = attendanceService.syncCoursesWithRoutines(routineList);
+      const updated = attendanceService.getCourses();
+      setCourses(updated);
+      return {
+        success: true,
+        summary: {
+          total_routine_courses: localSynced.length,
+          added: 0,
+          updated: localSynced.length,
+          archived: 0,
+          reactivated: 0,
+          unchanged: 0
+        },
+        courses: updated
+      };
+    } catch (err) {
+      console.warn('Backend sync error, performing local routine synchronization fallback:', err);
+      const routineList = fallbackRoutines || routines || routineService.getAll();
+      const localSynced = attendanceService.syncCoursesWithRoutines(routineList);
+      const updated = attendanceService.getCourses();
+      setCourses(updated);
+      return {
+        success: true,
+        summary: {
+          total_routine_courses: localSynced.length,
+          added: 0,
+          updated: localSynced.length,
+          archived: 0,
+          reactivated: 0,
+          unchanged: 0
+        },
+        courses: updated
+      };
     }
   };
 
@@ -1119,6 +1191,7 @@ export const DataProvider = ({ children }) => {
       addCourse,
       updateCourse,
       deleteCourse,
+      syncCoursesWithRoutine,
       // Inline course assessment & CT actions
       addCTMark,
       updateCTMark,

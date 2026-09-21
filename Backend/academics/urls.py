@@ -10,6 +10,7 @@ from .views import (
     AssessmentListCreateView,
     CourseDetailView,
     CourseListCreateView,
+    CourseSyncRoutineView,
     GoogleCalendarConnectView,
     GoogleCalendarStatusView,
     GoogleCalendarSyncView,
@@ -22,6 +23,7 @@ from .views import (
 
 urlpatterns = [
     path('courses/', CourseListCreateView.as_view(), name='course-list'),
+    path('courses/sync-routine/', CourseSyncRoutineView.as_view(), name='course-sync-routine'),
     path('courses/<str:pk>/', CourseDetailView.as_view(), name='course-detail'),
     path('routines/', RoutineListCreateView.as_view(), name='routine-list'),
     path('routines/clear/', RoutineClearView.as_view(), name='routine-clear'),

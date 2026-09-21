@@ -222,6 +222,7 @@ class CourseSerializer(UserOwnedModelSerializer):
     bestAssessmentCount = serializers.IntegerField(source='best_assessment_count', required=False)
     requiresReview = serializers.BooleanField(source='requires_review', required=False)
     importId = serializers.CharField(source='import_id', required=False, allow_blank=True)
+    isActive = serializers.BooleanField(source='is_active', required=False, default=True)
     history = AttendanceRecordSerializer(many=True, required=False)
     assessments = CourseAssessmentSerializer(many=True, required=False)
 
@@ -246,6 +247,7 @@ class CourseSerializer(UserOwnedModelSerializer):
             'requiresReview',
             'source',
             'importId',
+            'isActive',
             'history',
             'assessments',
             'createdAt',

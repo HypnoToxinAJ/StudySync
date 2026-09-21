@@ -16,7 +16,8 @@ import {
   BookOpen,
   Calendar,
   XCircle,
-  Pencil
+  Pencil,
+  RefreshCw
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { attendanceService, COURSE_TYPES } from '../services/attendanceService';
@@ -29,6 +30,7 @@ export const AttendancePage = () => {
     addCourse,
     updateCourse,
     deleteCourse,
+    syncCoursesWithRoutine,
     recordAttendance,
     undoLastMissed,
     deleteAttendanceRecord,
@@ -36,6 +38,36 @@ export const AttendancePage = () => {
     updateCTMark,
     deleteCTMark
   } = useData();
+
+  // Synchronization & Archived State
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncSummary, setSyncSummary] = useState(null);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [lastSyncedTime, setLastSyncedTime] = useState(null);
+  const [isArchivedExpanded, setIsArchivedExpanded] = useState(false);
+
+  // Split active courses from archived (removed from routine) courses
+  const activeCourses = useMemo(() => courses.filter(c => c.isActive !== false), [courses]);
+  const archivedCourses = useMemo(() => courses.filter(c => c.isActive === false), [courses]);
+
+  const handleSyncCourses = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const res = await syncCoursesWithRoutine();
+      if (res && res.summary) {
+        setSyncSummary(res.summary);
+        setIsSyncModalOpen(true);
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        setLastSyncedTime(timeStr);
+      }
+    } catch (err) {
+      console.error('Course synchronization error:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // State to control expanded / collapsed assessment lists for each course card
   // By default, expand first course (matching Card 1 in reference image) and collapse others
@@ -296,13 +328,28 @@ export const AttendancePage = () => {
           </div>
 
           {/* Right Header Buttons */}
-          <div className="flex items-center space-x-2.5 self-start lg:self-auto">
+          <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-auto">
             <button
               onClick={() => handleOpenHistory(null)}
               className="flex items-center space-x-1.5 px-3.5 py-2 bg-[#161e31] hover:bg-[#1e293d] border border-[#2a374f] active:scale-[0.98] text-slate-200 rounded-xl text-xs font-semibold shadow-sm transition-all"
             >
               <History className="w-4 h-4 text-slate-300" />
               <span>Missed History</span>
+            </button>
+
+            <button
+              id="sync-courses-btn"
+              onClick={handleSyncCourses}
+              disabled={isSyncing}
+              className={`flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all border shadow-sm ${
+                isSyncing
+                  ? 'bg-indigo-950/60 border-indigo-500/40 text-indigo-300 cursor-wait'
+                  : 'bg-[#1a1f38] hover:bg-[#22294c] border-indigo-500/40 hover:border-indigo-500/70 active:scale-[0.98] text-indigo-200 hover:text-white'
+              }`}
+              title="Synchronize courses from Class Routine as single Source of Truth"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Syncing...' : 'Sync Courses'}</span>
             </button>
 
             <button
@@ -314,33 +361,49 @@ export const AttendancePage = () => {
             </button>
           </div>
         </div>
+        {lastSyncedTime && (
+          <div className="flex items-center justify-end space-x-1.5 text-[11px] text-slate-400 pt-1">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Courses synchronized with Class Routine at {lastSyncedTime}</span>
+          </div>
+        )}
       </div>
 
       {/* ==================================================================== */}
       {/* 2. COURSE CARDS GRID (3-COLUMN EXACT PIXEL-FOR-PIXEL REPLICA)        */}
       {/* ==================================================================== */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {courses.length === 0 && (
+        {activeCourses.length === 0 && (
           <div className="col-span-full py-16 px-6 rounded-3xl bg-[#111827] border border-dashed border-[#1f293d] flex flex-col items-center justify-center text-center space-y-4 shadow-xl">
             <div className="w-16 h-16 rounded-2xl bg-indigo-950/60 border border-indigo-800/50 flex items-center justify-center">
               <BookOpen className="w-8 h-8 text-indigo-400" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white">No Courses Added Yet</h3>
+              <h3 className="text-lg font-bold text-white">No Active Courses Added Yet</h3>
               <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                Start tracking attendance limits and CT marks by adding your courses.
+                Synchronize your courses directly from Class Routine, or add courses manually.
               </p>
             </div>
-            <button
-              onClick={handleOpenAddCourse}
-              className="flex items-center space-x-2 px-5 py-2.5 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98]"
-            >
-              <Plus className="w-4 h-4" />
-              <span>+ Add Course</span>
-            </button>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={handleSyncCourses}
+                disabled={isSyncing}
+                className="flex items-center space-x-2 px-5 py-2.5 bg-indigo-900/50 hover:bg-indigo-900/80 border border-indigo-500/50 text-indigo-200 rounded-xl text-xs font-bold shadow-lg transition-all active:scale-[0.98]"
+              >
+                <RefreshCw className={`w-4 h-4 text-indigo-400 ${isSyncing ? 'animate-spin' : ''}`} />
+                <span>{isSyncing ? 'Syncing...' : 'Sync from Routine'}</span>
+              </button>
+              <button
+                onClick={handleOpenAddCourse}
+                className="flex items-center space-x-2 px-5 py-2.5 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 transition-all active:scale-[0.98]"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Add Course</span>
+              </button>
+            </div>
           </div>
         )}
-        {courses.map((course) => {
+        {activeCourses.map((course) => {
           const courseKey = course.id || course.courseId;
           const stats = attendanceService.calculateAttendanceStats(course);
           const overview = marksService.getCourseAssessmentsOverview(course);
@@ -706,27 +769,77 @@ export const AttendancePage = () => {
             </div>
           );
         })}
-
-        {courses.length > 0 && (
-          <button
-            type="button"
-            onClick={handleOpenAddCourse}
-            className="rounded-3xl border-2 border-dashed border-[#1f293d] hover:border-indigo-500/50 bg-[#111827]/40 hover:bg-[#111827]/80 p-8 flex flex-col items-center justify-center text-center space-y-3 transition-all group min-h-[360px] cursor-pointer"
-          >
-            <div className="w-12 h-12 rounded-2xl bg-[#161e31] group-hover:bg-indigo-600/20 text-slate-400 group-hover:text-indigo-400 border border-[#2a374f] group-hover:border-indigo-500/50 flex items-center justify-center transition-all shadow-sm">
-              <Plus className="w-6 h-6" />
-            </div>
-            <div>
-              <span className="text-sm font-bold text-slate-300 group-hover:text-white transition-colors block">
-                + Add Course
-              </span>
-              <span className="text-xs text-slate-500 mt-1 block">
-                Add theory or lab course
-              </span>
-            </div>
-          </button>
-        )}
       </div>
+
+      {/* ==================================================================== */}
+      {/* 2.1 ARCHIVED COURSES (Removed from Routine, Data Preserved)           */}
+      {/* ==================================================================== */}
+      {archivedCourses.length > 0 && (
+        <div className="mt-8 rounded-2xl bg-[#0e1626] border border-slate-800/80 p-5 space-y-4">
+          <div
+            onClick={() => setIsArchivedExpanded(!isArchivedExpanded)}
+            className="flex items-center justify-between cursor-pointer select-none"
+          >
+            <div className="flex items-center space-x-2.5">
+              <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-950/60 text-amber-300 border border-amber-800/40">
+                Archived ({archivedCourses.length})
+              </span>
+              <span className="text-xs font-medium text-slate-300">
+                Courses not currently in Routine (historical attendance records &amp; CT marks safely preserved)
+              </span>
+            </div>
+            <button className="text-slate-400 hover:text-white text-xs flex items-center space-x-1">
+              <span>{isArchivedExpanded ? 'Hide Archived' : 'View Archived'}</span>
+              {isArchivedExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+          </div>
+
+          {isArchivedExpanded && (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+              {archivedCourses.map((course) => {
+                const stats = attendanceService.calculateAttendanceStats(course);
+                const overview = marksService.getCourseAssessmentsOverview(course);
+                return (
+                  <div
+                    key={course.id || course.courseId}
+                    className="p-4 rounded-xl bg-[#111827] border border-slate-800/80 space-y-3 opacity-80 hover:opacity-100 transition-opacity"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-xs font-black text-slate-300">{course.courseId}</span>
+                        <h4 className="text-xs text-slate-400 truncate max-w-[180px]">{course.courseTitle}</h4>
+                      </div>
+                      <span className="text-[10px] text-amber-400 bg-amber-950/40 px-2 py-0.5 rounded border border-amber-800/30 font-semibold">
+                        Archived
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 flex items-center justify-between pt-1 border-t border-slate-800">
+                      <span>Missed: {stats.missedClasses}</span>
+                      <span>Total: {stats.totalClasses}</span>
+                      {overview.isApplicable && <span>Best CT: {overview.bestScoreFormatted}</span>}
+                    </div>
+                    <div className="flex items-center justify-between pt-2">
+                      <button
+                        onClick={() => handleOpenHistory(course)}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 font-medium"
+                      >
+                        View History
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCourseClick(course)}
+                        className="text-xs text-rose-400 hover:text-rose-300 font-medium flex items-center space-x-1"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete Permanently</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ==================================================================== */}
       {/* 3. MODALS                                                            */}
@@ -803,6 +916,12 @@ export const AttendancePage = () => {
         maxWidth="max-w-lg"
       >
         <form onSubmit={handleSaveCourseSubmit} className="space-y-4 text-xs">
+          {editingCourse && (
+            <div className="p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-800/50 flex items-center space-x-2 text-indigo-300 text-[11px]">
+              <RefreshCw className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <span>Routine-linked fields (Code, Title, Credits, Type) can also be synced automatically using <strong>Sync Courses</strong>.</span>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-bold text-slate-300 mb-1">Course Code</label>
@@ -1081,6 +1200,57 @@ export const AttendancePage = () => {
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>Delete Course</span>
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal 5: Routine Course Sync Summary Modal */}
+      <Modal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        title="Courses Synchronized with Class Routine"
+        maxWidth="max-w-md"
+      >
+        <div className="space-y-4 py-1">
+          <div className="flex items-center space-x-3 p-3.5 rounded-2xl bg-emerald-950/40 border border-emerald-800/50 text-emerald-300 text-xs">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            <span>Class Routine data successfully synchronized as the Source of Truth! All historical attendance records and CT marks were preserved.</span>
+          </div>
+
+          {syncSummary && (
+            <div className="grid grid-cols-2 gap-2.5 text-xs">
+              <div className="p-3 rounded-xl bg-[#111827] border border-[#1e293b]">
+                <span className="text-slate-400 block text-[11px]">Routine Courses</span>
+                <span className="text-lg font-bold text-white mt-0.5 block">{syncSummary.total_routine_courses ?? 0}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#111827] border border-[#1e293b]">
+                <span className="text-emerald-400 block text-[11px]">New Courses Added</span>
+                <span className="text-lg font-bold text-emerald-400 mt-0.5 block">{syncSummary.added ?? 0}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#111827] border border-[#1e293b]">
+                <span className="text-indigo-400 block text-[11px]">Metadata Updated</span>
+                <span className="text-lg font-bold text-indigo-400 mt-0.5 block">{syncSummary.updated ?? 0}</span>
+              </div>
+              <div className="p-3 rounded-xl bg-[#111827] border border-[#1e293b]">
+                <span className="text-amber-400 block text-[11px]">Archived Courses</span>
+                <span className="text-lg font-bold text-amber-400 mt-0.5 block">{syncSummary.archived ?? 0}</span>
+              </div>
+              {syncSummary.reactivated > 0 && (
+                <div className="p-3 rounded-xl bg-[#111827] border border-[#1e293b] col-span-2">
+                  <span className="text-cyan-400 block text-[11px]">Reactivated Courses</span>
+                  <span className="text-lg font-bold text-cyan-400 mt-0.5 block">{syncSummary.reactivated}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={() => setIsSyncModalOpen(false)}
+              className="px-5 py-2 bg-[#4F46E5] hover:bg-[#4338CA] text-white rounded-xl text-xs font-bold shadow-md shadow-indigo-600/20 transition-all"
+            >
+              Done
             </button>
           </div>
         </div>

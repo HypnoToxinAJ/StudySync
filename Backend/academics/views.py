@@ -319,6 +319,222 @@ class CourseDetailView(generics.RetrieveUpdateDestroyAPIView):
             return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class CourseSyncRoutineView(APIView):
+    """
+    Synchronizes courses from the user's Class Routine into Attendance & CT Marks.
+    Routine courses serve as the single SOURCE OF TRUTH for course existence and metadata.
+
+    Rules:
+    1. NEW COURSE: If in Routine but not Attendance -> Create course with routine metadata, is_active=True.
+    2. EXISTING COURSE: Update routine-controlled metadata (code, title, credit, type, faculty, semester, etc.).
+       Reactivate if previously archived (is_active=True).
+       NEVER reset or overwrite existing student tracking data (attendance records, missed classes, CT marks).
+    3. REMOVED FROM ROUTINE: If previously in Attendance but no longer in Routine -> Mark is_active=False (archive).
+       NEVER permanently delete; historical attendance and CT marks remain preserved.
+    4. DUPLICATE PREVENTION: Idempotent execution using normalized course code comparison.
+    5. ATOMIC: Entire sync runs within a database transaction.
+    """
+
+    @transaction.atomic
+    def post(self, request, *args, **kwargs):
+        user = request.user
+
+        def normalize_code(val):
+            return re.sub(r'[\s\-_]', '', str(val or '')).strip().upper()
+
+        # 1. Fetch user's routines from database
+        db_routines = list(Routine.objects.filter(user=user))
+        client_routines = request.data.get('routines')
+
+        # 2. Extract unique courses from Routine
+        routine_course_map = {}
+        for r in db_routines:
+            code = (r.course_code or '').strip()
+            norm = normalize_code(code)
+            if not norm:
+                continue
+
+            raw_type = str(r.course_type or r.class_type or 'theory').lower()
+            if 'lab' in raw_type:
+                ctype = Course.CourseType.LAB
+            elif 'sessional' in raw_type:
+                ctype = Course.CourseType.SESSIONAL
+            elif 'tutorial' in raw_type:
+                ctype = Course.CourseType.TUTORIAL
+            else:
+                ctype = Course.CourseType.THEORY
+
+            if norm not in routine_course_map:
+                credit_dec = Decimal(str(r.credit)) if r.credit and Decimal(str(r.credit)) > 0 else (Decimal('1.5') if ctype in (Course.CourseType.LAB, Course.CourseType.SESSIONAL) else Decimal('3.0'))
+                routine_course_map[norm] = {
+                    'course_code': code,
+                    'course_title': (r.course_title or '').strip() or code,
+                    'credit': credit_dec,
+                    'course_type': ctype,
+                    'faculty': (r.faculty or r.teacher_name or '').strip(),
+                    'color': r.color or ('#8B5CF6' if ctype == Course.CourseType.THEORY else '#06B6D4'),
+                    'section': getattr(r, 'section', '') or '',
+                    'group': getattr(r, 'group', '') or '',
+                    'slot_ids': [r.id],
+                }
+            else:
+                existing_entry = routine_course_map[norm]
+                existing_entry['slot_ids'].append(r.id)
+                if not existing_entry['faculty'] and (r.faculty or r.teacher_name):
+                    existing_entry['faculty'] = (r.faculty or r.teacher_name).strip()
+                if (existing_entry['course_title'] == existing_entry['course_code']) and r.course_title:
+                    existing_entry['course_title'] = r.course_title.strip()
+                if existing_entry['credit'] <= 0 and r.credit and Decimal(str(r.credit)) > 0:
+                    existing_entry['credit'] = Decimal(str(r.credit))
+                if 'lab' in raw_type or 'sessional' in raw_type:
+                    existing_entry['course_type'] = Course.CourseType.LAB
+
+        # Fallback: if database has no routines but client passed routines array
+        if not routine_course_map and isinstance(client_routines, list):
+            for cr in client_routines:
+                code = (cr.get('courseId') or cr.get('course_code') or '').strip()
+                norm = normalize_code(code)
+                if not norm:
+                    continue
+                if norm not in routine_course_map:
+                    raw_type = str(cr.get('courseType') or cr.get('classType') or 'theory').lower()
+                    ctype = Course.CourseType.LAB if ('lab' in raw_type or 'sessional' in raw_type) else Course.CourseType.THEORY
+                    credit_val = Decimal(str(cr.get('credit') or (1.5 if ctype == Course.CourseType.LAB else 3.0)))
+                    routine_course_map[norm] = {
+                        'course_code': code,
+                        'course_title': (cr.get('courseTitle') or cr.get('course_title') or code).strip(),
+                        'credit': credit_val,
+                        'course_type': ctype,
+                        'faculty': (cr.get('faculty') or cr.get('teacherName') or '').strip(),
+                        'color': cr.get('color') or ('#8B5CF6' if ctype == Course.CourseType.THEORY else '#06B6D4'),
+                        'section': cr.get('section', '') or '',
+                        'group': cr.get('group', '') or '',
+                        'slot_ids': [],
+                    }
+
+        # 3. Fetch existing Attendance courses
+        existing_courses = list(Course.objects.filter(user=user).prefetch_related('history', 'assessments'))
+        existing_map = {}
+        for c in existing_courses:
+            norm = normalize_code(c.course_id)
+            if norm not in existing_map or (not existing_map[norm].is_active and c.is_active):
+                existing_map[norm] = c
+
+        added_count = 0
+        updated_count = 0
+        archived_count = 0
+        reactivated_count = 0
+        unchanged_count = 0
+
+        user_semester = ''
+        if hasattr(user, 'studysync_profile') and user.studysync_profile and user.studysync_profile.semester:
+            user_semester = user.studysync_profile.semester
+
+        # 4. Synchronize each Routine course into Attendance
+        for norm, r_info in routine_course_map.items():
+            if norm in existing_map:
+                course = existing_map[norm]
+                was_inactive = not course.is_active
+                metadata_changed = False
+
+                if was_inactive:
+                    course.is_active = True
+                    reactivated_count += 1
+
+                # Update routine-controlled metadata
+                if r_info['course_title'] and course.course_title != r_info['course_title']:
+                    course.course_title = r_info['course_title']
+                    metadata_changed = True
+
+                if r_info['credit'] > 0 and course.credit != r_info['credit']:
+                    course.credit = r_info['credit']
+                    metadata_changed = True
+
+                if course.course_type != r_info['course_type']:
+                    course.course_type = r_info['course_type']
+                    metadata_changed = True
+
+                if r_info['faculty'] and course.faculty != r_info['faculty']:
+                    course.faculty = r_info['faculty']
+                    metadata_changed = True
+
+                if r_info.get('color') and course.color != r_info['color']:
+                    course.color = r_info['color']
+                    metadata_changed = True
+
+                is_theory = course.course_type == Course.CourseType.THEORY
+                target_assessment_applicable = is_theory
+                target_best_count = max(1, int(round(float(course.credit)))) if is_theory else 0
+
+                if course.assessment_applicable != target_assessment_applicable:
+                    course.assessment_applicable = target_assessment_applicable
+                    metadata_changed = True
+
+                if course.best_assessment_count != target_best_count:
+                    course.best_assessment_count = target_best_count
+                    metadata_changed = True
+
+                if was_inactive or metadata_changed:
+                    course.save()
+                    if metadata_changed and not was_inactive:
+                        updated_count += 1
+                else:
+                    unchanged_count += 1
+
+                if r_info['slot_ids']:
+                    Routine.objects.filter(user=user, id__in=r_info['slot_ids']).update(course=course)
+
+            else:
+                # NEW COURSE: create automatically with routine metadata
+                is_theory = r_info['course_type'] == Course.CourseType.THEORY
+                credit_val = r_info['credit']
+                new_course = Course.objects.create(
+                    user=user,
+                    course_id=r_info['course_code'],
+                    course_title=r_info['course_title'],
+                    credit=credit_val,
+                    course_type=r_info['course_type'],
+                    faculty=r_info.get('faculty', ''),
+                    semester=user_semester or '5th Semester',
+                    section=r_info.get('section', ''),
+                    group=r_info.get('group', ''),
+                    color=r_info.get('color') or ('#8B5CF6' if is_theory else '#06B6D4'),
+                    assessment_applicable=is_theory,
+                    best_assessment_count=max(1, int(round(float(credit_val)))) if is_theory else 0,
+                    is_active=True,
+                )
+                added_count += 1
+                existing_map[norm] = new_course
+
+                if r_info['slot_ids']:
+                    Routine.objects.filter(user=user, id__in=r_info['slot_ids']).update(course=new_course)
+
+        # 5. Archive courses removed from Routine (Rule C)
+        for norm, course in existing_map.items():
+            if norm not in routine_course_map:
+                if course.is_active:
+                    course.is_active = False
+                    course.save(update_fields=['is_active', 'updated_at'])
+                    archived_count += 1
+
+        # 6. Fetch & serialize all user courses
+        all_courses = Course.objects.filter(user=user).prefetch_related('history', 'assessments').order_by('course_id')
+        serialized = CourseSerializer(all_courses, many=True).data
+
+        return Response({
+            'success': True,
+            'summary': {
+                'total_routine_courses': len(routine_course_map),
+                'added': added_count,
+                'updated': updated_count,
+                'archived': archived_count,
+                'reactivated': reactivated_count,
+                'unchanged': unchanged_count,
+            },
+            'courses': serialized,
+        }, status=status.HTTP_200_OK)
+
+
 class RoutineClearView(APIView):
     """Clear all routine records and associated attendance & CT marks for the authenticated user."""
 

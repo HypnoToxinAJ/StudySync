@@ -1175,6 +1175,317 @@ class CourseApiTests(APITestCase):
         self.assertEqual(CourseAssessment.objects.filter(course_id=db_id).count(), 0)
 
 
+@override_settings(
+    SUPABASE_JWT_SECRET='test-only-supabase-secret-with-sufficient-length',
+    SUPABASE_JWT_ISSUER='https://test-project.supabase.co/auth/v1',
+    SUPABASE_JWT_AUDIENCE='authenticated',
+    SUPABASE_JWT_ALGORITHMS=('HS256',),
+    GEMINI_API_KEY='test-gemini-key',
+)
+class CourseRoutineSyncTests(APITestCase):
+    def make_token(self, email='sync_student@example.com', subject='22222222-2222-4222-8222-222222222222'):
+        now = datetime.now(timezone.utc)
+        return jwt.encode(
+            {
+                'iss': 'https://test-project.supabase.co/auth/v1',
+                'aud': 'authenticated',
+                'sub': subject,
+                'email': email,
+                'role': 'authenticated',
+                'iat': now,
+                'exp': now + timedelta(minutes=10),
+                'app_metadata': {'provider': 'google'},
+                'user_metadata': {'full_name': 'Sync Student'},
+            },
+            'test-only-supabase-secret-with-sufficient-length',
+            algorithm='HS256',
+        )
+
+    def authenticate(self, **kwargs):
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f'Bearer {self.make_token(**kwargs)}'
+        )
+
+    def get_user(self, email='sync_student@example.com', subject='22222222-2222-4222-8222-222222222222'):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user, _ = User.objects.get_or_create(username=subject, defaults={'email': email})
+        return user
+
+    def create_routine(self, user, code, title, credit=3.0, course_type=Course.CourseType.THEORY, faculty='Prof. Smith', day='sunday', start='09:00:00', end='09:50:00'):
+        return Routine.objects.create(
+            user=user,
+            course_code=code,
+            course_title=title,
+            credit=Decimal(str(credit)),
+            course_type=course_type,
+            faculty=faculty,
+            day_of_week=day,
+            start_time=start,
+            end_time=end,
+            color='#4F46E5',
+        )
+
+    def test_1_sync_creates_courses_from_routine(self):
+        """TEST 1: Routine has 3 courses, Attendance has 0 -> Sync creates 3 courses with routine metadata."""
+        user = self.get_user()
+        self.authenticate()
+
+        # Create 3 routine slots
+        r1 = self.create_routine(user, 'CSE-311', 'Database Systems', credit=3.0, course_type=Course.CourseType.THEORY)
+        r2 = self.create_routine(user, 'CSE-312', 'Database Systems Lab', credit=1.5, course_type=Course.CourseType.LAB, start='10:00:00', end='12:30:00')
+        r3 = self.create_routine(user, 'CSE-313', 'Computer Networks', credit=3.0, course_type=Course.CourseType.THEORY, start='13:00:00', end='13:50:00')
+
+        self.assertEqual(Course.objects.filter(user=user).count(), 0)
+
+        response = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['success'])
+        self.assertEqual(response.data['summary']['added'], 3)
+        self.assertEqual(response.data['summary']['total_routine_courses'], 3)
+
+        # Verify courses in DB
+        courses = Course.objects.filter(user=user)
+        self.assertEqual(courses.count(), 3)
+        for c in courses:
+            self.assertTrue(c.is_active)
+
+        c1 = Course.objects.get(user=user, course_id='CSE-311')
+        self.assertEqual(c1.course_title, 'Database Systems')
+        self.assertEqual(c1.credit, Decimal('3.0'))
+        self.assertEqual(c1.course_type, Course.CourseType.THEORY)
+        self.assertTrue(c1.assessment_applicable)
+        self.assertEqual(c1.best_assessment_count, 3)
+
+        c2 = Course.objects.get(user=user, course_id='CSE-312')
+        self.assertEqual(c2.credit, Decimal('1.5'))
+        self.assertEqual(c2.course_type, Course.CourseType.LAB)
+        self.assertFalse(c2.assessment_applicable)
+
+        # Verify routine slots linked
+        r1.refresh_from_db()
+        self.assertEqual(r1.course, c1)
+
+    def test_2_idempotent_resync_no_duplicates(self):
+        """TEST 2: Idempotent re-sync -> Still 3 courses, 0 duplicates."""
+        user = self.get_user()
+        self.authenticate()
+
+        self.create_routine(user, 'CSE-311', 'Database Systems', credit=3.0)
+        self.create_routine(user, 'CSE-312', 'Database Systems Lab', credit=1.5, course_type=Course.CourseType.LAB)
+        self.create_routine(user, 'CSE-313', 'Computer Networks', credit=3.0)
+
+        # First sync
+        res1 = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res1.status_code, 200)
+        self.assertEqual(res1.data['summary']['added'], 3)
+
+        # Second sync immediately
+        res2 = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res2.status_code, 200)
+        self.assertEqual(res2.data['summary']['added'], 0)
+        self.assertEqual(res2.data['summary']['unchanged'], 3)
+        self.assertEqual(res2.data['summary']['total_routine_courses'], 3)
+
+        self.assertEqual(Course.objects.filter(user=user).count(), 3)
+
+    def test_3_add_new_course_to_routine(self):
+        """TEST 3: Add new course to Routine -> Sync creates only the new course."""
+        user = self.get_user()
+        self.authenticate()
+
+        self.create_routine(user, 'CSE-311', 'Database Systems', credit=3.0)
+        self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(Course.objects.filter(user=user).count(), 1)
+
+        # Add new routine course
+        self.create_routine(user, 'CSE-315', 'Software Engineering', credit=3.0, start='11:00:00', end='11:50:00')
+
+        res = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['summary']['added'], 1)
+        self.assertEqual(res.data['summary']['unchanged'], 1)
+        self.assertEqual(res.data['summary']['total_routine_courses'], 2)
+        self.assertEqual(Course.objects.filter(user=user).count(), 2)
+        self.assertTrue(Course.objects.filter(user=user, course_id='CSE-315').exists())
+
+    def test_4_update_routine_metadata_updates_attendance(self):
+        """TEST 4: Update Routine course metadata -> Sync updates Attendance course metadata."""
+        user = self.get_user()
+        self.authenticate()
+
+        r = self.create_routine(user, 'CSE-311', 'Database Systems', credit=3.0, faculty='Prof. Old')
+        self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+
+        # Update metadata on routine
+        r.course_title = 'Advanced Database Management Systems'
+        r.faculty = 'Dr. New Faculty'
+        r.save()
+
+        res = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['summary']['updated'], 1)
+
+        course = Course.objects.get(user=user, course_id='CSE-311')
+        self.assertEqual(course.course_title, 'Advanced Database Management Systems')
+        self.assertEqual(course.faculty, 'Dr. New Faculty')
+
+    def test_5_existing_attendance_and_ct_marks_preserved(self):
+        """TEST 5: Course has existing attendance history and CT marks -> Sync leaves marks/history intact."""
+        user = self.get_user()
+        self.authenticate()
+
+        self.create_routine(user, 'CSE-311', 'Database Systems', credit=3.0)
+        self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+
+        course = Course.objects.get(user=user, course_id='CSE-311')
+        course.missed_classes = 2
+        course.total_classes = 10
+        course.attended_classes = 8
+        course.save()
+
+        att1 = AttendanceRecord.objects.create(
+            user=user,
+            course=course,
+            date='2026-09-10',
+            status='missed',
+            reason='Medical Appointment',
+        )
+        att2 = AttendanceRecord.objects.create(
+            user=user,
+            course=course,
+            date='2026-09-15',
+            status='missed',
+            reason='Traffic Delay',
+        )
+
+        ct1 = CourseAssessment.objects.create(
+            user=user,
+            course=course,
+            name='CT 1: SQL Normalization',
+            assessment_type='CT',
+            total_marks=20,
+            obtained_marks=18.5,
+            date='2026-09-12',
+        )
+
+        # Run sync
+        res = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res.status_code, 200)
+
+        # Verify historical records and student tracking data are 100% preserved
+        course.refresh_from_db()
+        self.assertEqual(course.missed_classes, 2)
+        self.assertEqual(course.attended_classes, 8)
+        self.assertEqual(course.total_classes, 10)
+        self.assertEqual(AttendanceRecord.objects.filter(course=course).count(), 2)
+        self.assertEqual(CourseAssessment.objects.filter(course=course).count(), 1)
+        ct_record = CourseAssessment.objects.get(course=course)
+        self.assertEqual(ct_record.name, 'CT 1: SQL Normalization')
+        self.assertEqual(ct_record.obtained_marks, Decimal('18.5'))
+
+    def test_6_course_removed_from_routine_archived_not_deleted(self):
+        """TEST 6: Course removed from Routine -> Sync marks Attendance course as archived (is_active = False), NOT deleted."""
+        user = self.get_user()
+        self.authenticate()
+
+        r1 = self.create_routine(user, 'CSE-311', 'Database Systems', credit=3.0)
+        r2 = self.create_routine(user, 'CSE-312', 'Database Systems Lab', credit=1.5, course_type=Course.CourseType.LAB, start='10:00:00', end='12:30:00')
+        self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+
+        course_311 = Course.objects.get(user=user, course_id='CSE-311')
+        att = AttendanceRecord.objects.create(user=user, course=course_311, date='2026-09-10', status='missed')
+        ct = CourseAssessment.objects.create(user=user, course=course_311, name='CT 1', total_marks=20, obtained_marks=15, date='2026-09-12')
+
+        # Remove CSE-311 from Routine (e.g. dropped course or semester routine change)
+        r1.delete()
+
+        res = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['summary']['archived'], 1)
+        self.assertEqual(res.data['summary']['total_routine_courses'], 1)
+
+        # Verify course still exists in DB but is_active is False
+        course_311.refresh_from_db()
+        self.assertFalse(course_311.is_active)
+        self.assertEqual(AttendanceRecord.objects.filter(course=course_311).count(), 1)
+        self.assertEqual(CourseAssessment.objects.filter(course=course_311).count(), 1)
+
+        # Active course CSE-312 remains active
+        course_312 = Course.objects.get(user=user, course_id='CSE-312')
+        self.assertTrue(course_312.is_active)
+
+    def test_7_readd_course_to_routine_reactivated_not_duplicated(self):
+        """TEST 7: Re-add course to Routine -> Sync reactivates archived course instead of creating duplicate."""
+        user = self.get_user()
+        self.authenticate()
+
+        r1 = self.create_routine(user, 'CSE-311', 'Database Systems', credit=3.0)
+        self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+
+        # Remove to archive
+        r1.delete()
+        self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        course = Course.objects.get(user=user, course_id='CSE-311')
+        self.assertFalse(course.is_active)
+
+        # Re-add CSE-311 to routine
+        self.create_routine(user, 'CSE-311', 'Database Systems (Re-added)', credit=3.0)
+        res = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.data['summary']['reactivated'], 1)
+        self.assertEqual(res.data['summary']['added'], 0)
+
+        # Verify single reactivated record
+        all_311 = Course.objects.filter(user=user, course_id='CSE-311')
+        self.assertEqual(all_311.count(), 1)
+        course.refresh_from_db()
+        self.assertTrue(course.is_active)
+        self.assertEqual(course.course_title, 'Database Systems (Re-added)')
+
+    def test_8_multi_user_isolation(self):
+        """TEST 8: Multi-user isolation -> User A's sync does not affect User B's courses."""
+        user_a = self.get_user(email='user_a@example.com', subject='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+        user_b = self.get_user(email='user_b@example.com', subject='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+
+        self.create_routine(user_a, 'CSE-311', 'User A Course', credit=3.0)
+        self.create_routine(user_b, 'CSE-411', 'User B Course', credit=3.0)
+
+        # User A syncs
+        self.authenticate(email='user_a@example.com', subject='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+        res_a = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res_a.status_code, 200)
+        self.assertEqual(Course.objects.filter(user=user_a).count(), 1)
+        self.assertEqual(Course.objects.filter(user=user_a, course_id='CSE-311').count(), 1)
+        self.assertEqual(Course.objects.filter(user=user_a, course_id='CSE-411').count(), 0)
+
+        # User B syncs
+        self.authenticate(email='user_b@example.com', subject='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')
+        res_b = self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+        self.assertEqual(res_b.status_code, 200)
+        self.assertEqual(Course.objects.filter(user=user_b).count(), 1)
+        self.assertEqual(Course.objects.filter(user=user_b, course_id='CSE-411').count(), 1)
+        self.assertEqual(Course.objects.filter(user=user_b, course_id='CSE-311').count(), 0)
+
+    def test_9_atomic_rollback_on_error(self):
+        """TEST 9: Transaction rollback test -> Atomic rollback on error."""
+        user = self.get_user()
+        self.authenticate()
+
+        self.create_routine(user, 'CSE-311', 'Database Systems', credit=3.0)
+        self.create_routine(user, 'CSE-312', 'Database Systems Lab', credit=1.5, course_type=Course.CourseType.LAB)
+
+        with patch.object(Course.objects, 'create', side_effect=RuntimeError('Database disk write failure')):
+            try:
+                self.client.post('/api/v1/academics/courses/sync-routine/', {}, format='json')
+            except RuntimeError:
+                pass
+
+        # Entire transaction should have rolled back
+        self.assertEqual(Course.objects.filter(user=user).count(), 0)
+
+
+
 
 
 
