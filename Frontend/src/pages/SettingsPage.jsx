@@ -16,6 +16,7 @@ import { useData } from '../context/DataContext';
 import { storageService } from '../services/storageService';
 import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import { AvatarPicker } from '../components/profile/AvatarPicker';
+import { EditProfileCard } from '../components/profile/EditProfileCard';
 import { ResetSemesterCard } from '../features/settings/components/ResetSemesterCard';
 import { SidebarSectionsSettings } from '../features/settings/components/SidebarSectionsSettings';
 
@@ -74,7 +75,10 @@ export const SettingsPage = () => {
       {/* 1. AVATAR SELECTION SECTION */}
       <AvatarPicker />
 
-      {/* 2. THEME & VISUAL PREFERENCES */}
+      {/* 2. ACADEMIC PROFILE EDIT */}
+      <EditProfileCard />
+
+      {/* 3. THEME & VISUAL PREFERENCES */}
       <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-4">
         <h3 className="text-base font-bold text-slate-900 dark:text-white">Theme & Appearance</h3>
         <div className="flex items-center justify-between p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl">
