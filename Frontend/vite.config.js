@@ -280,8 +280,16 @@ const cuetProxyPlugin = () => ({
 export default defineConfig(({ mode }) => {
   const rootEnvDir = path.resolve(__dirname, '..');
   const rootEnv = loadEnv(mode, rootEnvDir, '');
-  const configuredSupabaseUrl = rootEnv.VITE_SUPABASE_URL || rootEnv.SUPABASE_URL;
-  const supabaseAnonKey = rootEnv.VITE_SUPABASE_ANON_KEY || rootEnv.SUPABASE_ANON_KEY;
+  const configuredSupabaseUrl =
+    rootEnv.VITE_SUPABASE_URL ||
+    rootEnv.SUPABASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    process.env.SUPABASE_URL;
+  const supabaseAnonKey =
+    rootEnv.VITE_SUPABASE_ANON_KEY ||
+    rootEnv.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_ANON_KEY;
 
   if (!configuredSupabaseUrl || !supabaseAnonKey) {
     throw new Error(
