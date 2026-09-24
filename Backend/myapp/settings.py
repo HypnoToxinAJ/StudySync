@@ -175,6 +175,12 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     'x-google-token',
 ]
 
+# Allow any Vercel deployment (preview/production) and all local ports
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https:\/\/.*\.vercel\.app$",
+    r"^http:\/\/(localhost|127\.0\.0\.1)(:[0-9]+)?$",
+]
+
 CSRF_TRUSTED_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -183,6 +189,10 @@ CSRF_TRUSTED_ORIGINS = [
     ).split(',')
     if origin.strip()
 ]
+
+for trusted_origin in ['https://*.vercel.app', 'https://studysync-jowq.onrender.com']:
+    if trusted_origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(trusted_origin)
 
 
 # Database

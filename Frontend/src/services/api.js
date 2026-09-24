@@ -2,7 +2,10 @@ import axios from 'axios';
 import { supabase } from './supabaseClient';
 
 const configuredBaseUrl = (
-  import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD
+    ? 'https://studysync-jowq.onrender.com/api/v1'
+    : 'http://localhost:8000/api/v1')
 ).replace(/\/+$/, '');
 
 export const API_BASE_URL = configuredBaseUrl.endsWith('/api')
