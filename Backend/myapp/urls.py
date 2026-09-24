@@ -19,9 +19,16 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from django.http import JsonResponse
 from academics.views import RoutineImageImportView
 
+
+def health_check(request):
+    return JsonResponse({'status': 'healthy', 'service': 'StudySync API'})
+
+
 urlpatterns = [
+    path('', health_check, name='health-check'),
     path('admin/', admin.site.urls),
     path('api/v1/', include('core.urls')),
     path('api/v1/academics/', include('academics.urls')),

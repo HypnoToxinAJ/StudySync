@@ -35,9 +35,14 @@ DEBUG = os.getenv('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
 ALLOWED_HOSTS = [
     host.strip()
-    for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,.onrender.com').split(',')
+    for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
     if host.strip()
 ]
+
+# Unconditionally allow Render domains and internal hosts
+for domain in ['.onrender.com', 'studysync-jowq.onrender.com', 'localhost', '127.0.0.1']:
+    if domain not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(domain)
 
 RENDER_EXTERNAL_HOSTNAME = os.getenv('RENDER_EXTERNAL_HOSTNAME')
 if RENDER_EXTERNAL_HOSTNAME and RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
