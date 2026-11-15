@@ -40,3 +40,5 @@ htmlcov/
 venv/
 Backend/staticfiles/
 Backend/media/
+diagrams/
+presentation_screenshots/

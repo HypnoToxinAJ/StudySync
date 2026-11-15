@@ -11,6 +11,20 @@ import { setCurrentSession } from '../services/api';
 import { apiClient } from '../services/apiClient';
 import { supabase } from '../services/supabaseClient';
 import { assessmentApi } from '../services/assessmentApi';
+import {
+  initialUserData,
+  initialCourses,
+  initialRoutines,
+  initialAssessments,
+  initialSemesters,
+  initialTuitionStudents,
+  initialExpenses,
+  initialShortcuts,
+  initialNotes,
+  initialMedications,
+  initialTasks,
+  initialFocusData
+} from '../data/mockData';
 
 const AuthContext = createContext(null);
 
@@ -190,6 +204,12 @@ export const AuthProvider = ({ children }) => {
 
     const restoreSession = async () => {
       try {
+        const cachedUser = storageService.get(storageService.KEYS.USER, null);
+        if (cachedUser && cachedUser.isLoggedIn && cachedUser.provider === 'demo') {
+          setUserState(cachedUser);
+          if (active) setLoading(false);
+          return;
+        }
         const { data, error } = await supabase.auth.getSession();
         throwIfError(error);
         if (active) await applySession(data.session);
@@ -239,6 +259,32 @@ export const AuthProvider = ({ children }) => {
       verifyGoogleServices(providerToken);
     }
   }, [providerToken, googleServicesGranted, verifyGoogleServices]);
+
+  const loginAsDemo = useCallback(() => {
+    storageService.initialize();
+    storageService.set(storageService.KEYS.COURSES, initialCourses);
+    storageService.set(storageService.KEYS.ROUTINES, initialRoutines);
+    storageService.set(storageService.KEYS.ASSESSMENTS, initialAssessments);
+    storageService.set(storageService.KEYS.SEMESTERS, initialSemesters);
+    storageService.set(storageService.KEYS.TUITIONS, initialTuitionStudents);
+    storageService.set(storageService.KEYS.EXPENSES, initialExpenses);
+    storageService.set(storageService.KEYS.SHORTCUTS, initialShortcuts);
+    storageService.set(storageService.KEYS.NOTES, initialNotes);
+    storageService.set(storageService.KEYS.MEDICATIONS, initialMedications);
+    storageService.set(storageService.KEYS.TASKS, initialTasks);
+    storageService.set(storageService.KEYS.FOCUS, initialFocusData);
+
+    const demoUser = {
+      ...initialUserData,
+      id: 'demo-student-tanvir',
+      isLoggedIn: true,
+      onboarded: true,
+      provider: 'demo'
+    };
+    storageService.set(storageService.KEYS.USER, demoUser);
+    setUserState(demoUser);
+    return demoUser;
+  }, []);
 
   const login = async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
@@ -362,6 +408,7 @@ export const AuthProvider = ({ children }) => {
       verifyGoogleServices,
       loading,
       login,
+      loginAsDemo,
       loginWithGoogle,
       connectGoogleServices,
       register,

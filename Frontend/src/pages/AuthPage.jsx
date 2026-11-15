@@ -5,7 +5,7 @@ import { Modal } from '../components/common/Modal';
 import { ArrowRight } from 'lucide-react';
 
 export const AuthPage = () => {
-  const { user, login, register, loginWithGoogle, forgotPassword } = useAuth();
+  const { user, login, register, loginWithGoogle, loginAsDemo, forgotPassword } = useAuth();
   const [errorMessage, setErrorMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -163,6 +163,14 @@ export const AuthPage = () => {
             <path fill="#EA4335" d="M12 5.9c1.5 0 2.8.5 3.8 1.5l2.9-2.8A9.7 9.7 0 0 0 3.3 7.4L6.6 10A5.8 5.8 0 0 1 12 5.9Z" />
           </svg>
           <span>Continue with Google</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={loginAsDemo}
+          className="w-full py-2.5 bg-gradient-to-r from-indigo-600/30 via-purple-600/30 to-pink-600/30 hover:from-indigo-600/50 hover:to-purple-600/50 text-indigo-200 border border-indigo-500/30 font-semibold text-xs rounded-xl transition-all flex items-center justify-center space-x-2"
+        >
+          <span>🎓 Explore Demo / Presentation Mode</span>
         </button>
 
         <div className="text-center pt-2">
